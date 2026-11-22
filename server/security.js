@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { cliCmd } from './config.js';
 import { UserError, safeEqual } from './util.js';
 
 const COOKIE = 'cockpit_s';
@@ -260,7 +261,7 @@ export function createSecurity({ config, port = config.port }) {
       // first-run setup through the setup code
       if (password()) return page(409, authPage({ mode: 'login', error: 'Passwort ist bereits gesetzt.' }));
       const code = String(body.get('code') ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (!setupCode || !safeEqual(code, setupCode.replace('-', ''))) { fail(ip); return page(401, authPage({ mode, error: 'Einrichtungscode stimmt nicht (steht in der Server-Konsole bzw. `npm run link`).' })); }
+      if (!setupCode || !safeEqual(code, setupCode.replace('-', ''))) { fail(ip); return page(401, authPage({ mode, error: `Einrichtungscode stimmt nicht (steht in der Server-Konsole bzw. ${cliCmd('link')}).` })); }
       const pw = body.get('password') ?? '';
       if (pw !== (body.get('password2') ?? '')) return page(400, authPage({ mode, error: 'Passwörter stimmen nicht überein.' }));
       const err = validatePassword(pw);
@@ -372,7 +373,7 @@ function authPage({ mode, error = null, newHost = null }) {
   const setup = mode === 'setup';
   const body = setup
     ? `<h1>Cockpit einrichten</h1>
-<p>Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder <code>npm run link</code>).</p>
+<p>Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder <code>${cliCmd('link')}</code>).</p>
 ${error ? `<p class="err">${esc(error)}</p>` : ''}
 <form method="post" action="/setup">
 <label>Einrichtungscode<input name="code" autocomplete="one-time-code" placeholder="XXXX-XXXX" autocapitalize="characters" required autofocus></label>

@@ -184,7 +184,7 @@ export class Runner extends EventEmitter {
     const { config, root } = this.ctx;
     const p = this.project;
     const mcpServers = { cockpit: cockpitMcp(this.ctx, this.projectId) };
-    const cli = playwrightMcpCli(root);
+    const cli = playwrightMcpCli();
     if (config.browserMcp && p.browser?.enabled !== false && cli) {
       // Playwright always talks to the cockpit's CDP relay: it routes to the identity that is active
       // right now (linked one, else this project's isolated browser), starts it on demand and lets

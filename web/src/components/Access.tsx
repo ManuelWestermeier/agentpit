@@ -51,7 +51,7 @@ export function SetupPassword() {
         <div className="pw-meter"><i style={{ width: `${Math.min(100, (pw.length / 20) * 100)}%` }} className={pw.length >= MIN ? 'ok' : ''} /></div>
         {err && <p className="err small-text">{err}</p>}
         <button className="btn primary setup-btn" disabled={busy || !pw || !pw2}>{busy ? 'Speichere …' : 'Passwort setzen'}</button>
-        <p className="faint small-text">Mindestens {MIN} Zeichen – am besten aus dem Passwortmanager. Vergessen? Auf dem Server <code>npm run set-password</code>.</p>
+        <p className="faint small-text">Mindestens {MIN} Zeichen – am besten aus dem Passwortmanager. Vergessen? Auf dem Server <code>npx agentpit set-password</code> (im Repo: <code>npm run set-password</code>).</p>
       </form>
     </div>
   );

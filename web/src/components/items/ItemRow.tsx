@@ -47,7 +47,8 @@ export function ItemBody({ item }: { item: Item }) {
       );
     case 'init': {
       // model and tool count are visible elsewhere; only a tool server that failed to connect matters here
-      const broken = item.mcp.filter((m) => m.status !== 'connected');
+      // plugins and claude.ai connectors come from the user's global Claude setup – not logged in there is normal, not a fault here
+      const broken = item.mcp.filter((m) => m.status === 'failed' && !/^(plugin:|claude\.ai )/.test(m.name));
       if (!broken.length) return null;
       return <div className="note warn">{broken.map((m) => `${m.name}: ${m.status}`).join(' · ')} – diese Werkzeuge fehlen in der Session ({shortModel(item.model)})</div>;
     }

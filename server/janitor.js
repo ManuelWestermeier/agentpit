@@ -100,7 +100,7 @@ export class Janitor {
         if (!dryRun) await fsp.rm(file, { force: true });
         report.freed += st.size;
         report.files++;
-        report.details.push(`${why}: ${path.relative(this.ctx.root, file)}`);
+        report.details.push(`${why}: ${path.relative(this.ctx.config.home, file)}`);
       } catch { /* locked or gone – next pass */ }
     };
     const olderThan = async (file, days) => {

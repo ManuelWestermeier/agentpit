@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
-import { findBrowserExecutable } from './environment.js';
+import { findBrowserExecutable, playwrightMcpCli } from './environment.js';
 import { UserError, slugify, stripAnsi, throttle, withTimeout } from './util.js';
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -1040,8 +1040,8 @@ export class Browsers extends EventEmitter {
 
   installBrowsers() {
     if (this.install.state === 'running') return;
-    const cli = path.join(this.ctx.root, 'node_modules', '@playwright', 'mcp', 'cli.js');
-    if (!fs.existsSync(cli)) throw new UserError('@playwright/mcp fehlt – npm install ausführen');
+    const cli = playwrightMcpCli();
+    if (!cli) throw new UserError('@playwright/mcp fehlt – npm install ausführen');
     this.install = { state: 'running', lines: [`Ziel: ${process.env.PLAYWRIGHT_BROWSERS_PATH}`] };
     const push = (d) => {
       for (const l of stripAnsi(String(d)).split(/[\r\n]+/)) if (l.trim()) this.install.lines.push(l.trim().slice(0, 300));

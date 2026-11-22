@@ -285,7 +285,8 @@ async function main() {
   });
 
   const url = `http://localhost:${port}/?token=${security.token}`;
-  console.log(`\n  Agent Cockpit ${VERSION}`);
+  console.log(`\n  agentpit ${VERSION}`);
+  if (cfg.home !== ROOT) console.log(`  Daten: ${cfg.home}`);
   console.log(`  ${url}`);
   if (!security.hasPassword()) {
     console.log(`  Ersteinrichtung: Passwort im Browser festlegen – Einrichtungscode ${security.setupCode()}`);

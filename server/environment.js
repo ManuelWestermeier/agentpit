@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { cliCmd } from './config.js';
 import { installPlan } from './installer.js';
 
 const require = createRequire(import.meta.url);
@@ -80,9 +81,12 @@ export function findBrowserExecutable(engine) {
   return null;
 }
 
-export function playwrightMcpCli(root) {
-  const cli = path.join(root, 'node_modules', '@playwright', 'mcp', 'cli.js');
-  return fs.existsSync(cli) ? cli : null;
+/** Via module resolution – installed as a package, npm may hoist dependencies out of our own node_modules. */
+export function playwrightMcpCli() {
+  try {
+    const cli = path.join(path.dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js');
+    return fs.existsSync(cli) ? cli : null;
+  } catch { return null; }
 }
 
 export async function loadPty() {
@@ -115,14 +119,14 @@ export async function checkEnvironment({ config, root }) {
     ffmpeg: ffmpeg ? ffmpeg.split('\n')[0].replace(/^ffmpeg version\s+/, '').split(' ')[0] : null,
     git: git ? git.replace(/^git version\s+/, '') : null,
     browser: { channel, chrome: !!browsers.chrome, msedge: !!browsers.msedge, bundled },
-    playwrightMcp: !!playwrightMcpCli(root),
+    playwrightMcp: !!playwrightMcpCli(),
     pty: !!pty,
     // short text + one-click install where possible (server/installer.js); cmd only where it has to be typed (sudo)
     hints: [
       !ffmpeg && hint('ffmpeg', 'ffmpeg fehlt', 'für Videos', process.platform === 'darwin' ? 'brew install ffmpeg' : process.platform === 'win32' ? 'winget install --id Gyan.FFmpeg -e' : 'sudo apt install ffmpeg'),
       !git && process.platform === 'win32' && hint('git', 'Git fehlt', 'Claude Code braucht dessen Bash', 'winget install --id Git.Git -e'),
       !gh && hint('gh', 'GitHub CLI fehlt', 'für den GitHub-Login', process.platform === 'darwin' ? 'brew install gh' : process.platform === 'win32' ? 'winget install GitHub.cli' : 'https://cli.github.com'),
-      !channel && !bundled && { key: 'browser', text: 'Kein Browser', why: 'für Browser-Identitäten', install: true, cmd: 'npm run install:browser' },
+      !channel && !bundled && { key: 'browser', text: 'Kein Browser', why: 'für Browser-Identitäten', install: true, cmd: cliCmd('install-browser') },
     ].filter(Boolean),
   };
 }

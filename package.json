@@ -1,14 +1,60 @@
 {
-  "name": "agent-cockpit",
+  "name": "agentpit",
   "version": "1.0.0",
-  "private": true,
-  "description": "Lokales Web-Cockpit: mehrere Claude-Code-Sessions (Agent SDK) parallel steuern, Commands/Outputs live sehen, Usage-Prognose, Datei- und Video-Vorschau.",
+  "description": "Run unlimited parallel Claude Code agents from one web cockpit – remote from any device, AI browser automation with persistent private browser identities, sub-agents, scheduled workflows, databases, charts and microservices.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "claude-agent-sdk",
+    "ai-agent",
+    "ai-agents",
+    "agent",
+    "multi-agent",
+    "autonomous-agents",
+    "agent-orchestration",
+    "coding-agent",
+    "ai-browser",
+    "browser-automation",
+    "browser-use",
+    "playwright",
+    "mcp",
+    "remote",
+    "remote-control",
+    "web-ui",
+    "dashboard",
+    "cockpit",
+    "workflow",
+    "automation",
+    "scheduler",
+    "cron",
+    "sessions",
+    "self-hosted",
+    "anthropic",
+    "llm",
+    "vibe-coding",
+    "devtools"
+  ],
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "agentpit": "bin/agentpit.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "scripts/",
+    "templates/",
+    "web/dist/",
+    ".env.example",
+    "README.md",
+    "README.de.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node bin/agentpit.js",
     "dev": "node --watch-path=server server/index.js",
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "dev:web": "npm --prefix web run dev",
@@ -16,7 +62,8 @@
     "test:browser": "node --test --test-concurrency=1 test/browser.e2e.test.js test/identity.e2e.test.js",
     "set-password": "node scripts/set-password.mjs",
     "link": "node scripts/link.mjs",
-    "install:browser": "node scripts/install-browser.mjs"
+    "install:browser": "node scripts/install-browser.mjs",
+    "prepublishOnly": "npm run build:web && npm test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.330",

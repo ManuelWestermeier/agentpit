@@ -1,8 +1,20 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** Program files (server, web/dist, templates). */
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * State: .env, data/, projects/, trash/, browsers/. From a git checkout that is the checkout itself (unchanged);
+ * installed via npm (npx agentpit, npm i -g) the package folder is replaced on every update – so ~/.agentpit.
+ */
+export const HOME = process.env.AGENTPIT_HOME
+  ? path.resolve(process.env.AGENTPIT_HOME)
+  : ROOT.split(path.sep).includes('node_modules') ? path.join(os.homedir(), '.agentpit') : ROOT;
+fs.mkdirSync(HOME, { recursive: true });
+/** How the user runs an admin command in this installation (shown in hints). */
+export const cliCmd = (name) => (HOME === ROOT ? `npm run ${name === 'install-browser' ? 'install:browser' : name}` : `npx agentpit ${name}`);
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -17,12 +29,12 @@ function loadDotEnv(file) {
     process.env[m[1]] = v;
   }
 }
-loadDotEnv(path.join(ROOT, '.env'));
+loadDotEnv(path.join(HOME, '.env'));
 
 const env = process.env;
 // Bundled browsers (Chromium + Playwright's ffmpeg for video recording) live next to the app.
 // Set before anything spawns, so Playwright MCP child processes find the same installation.
-if (!env.PLAYWRIGHT_BROWSERS_PATH) env.PLAYWRIGHT_BROWSERS_PATH = path.join(ROOT, 'browsers');
+if (!env.PLAYWRIGHT_BROWSERS_PATH) env.PLAYWRIGHT_BROWSERS_PATH = path.join(HOME, 'browsers');
 const bool = (v, d) => (v == null || v === '' ? d : /^(1|true|yes|on|ja)$/i.test(v));
 const int = (v, d, min, max) => {
   const n = Number.parseInt(v, 10);
@@ -48,10 +60,11 @@ export const config = Object.freeze({
   port: int(env.PORT, 4317, 1, 65535),
   previewPort: int(env.PREVIEW_PORT, 0, 0, 65535), // 0 = port + 1
   openBrowser: bool(env.OPEN_BROWSER, true),
-  projectsDir: path.resolve(ROOT, env.PROJECTS_DIR || 'projects'),
-  dataDir: path.resolve(ROOT, env.DATA_DIR || 'data'),
+  home: HOME,
+  projectsDir: path.resolve(HOME, env.PROJECTS_DIR || 'projects'),
+  dataDir: path.resolve(HOME, env.DATA_DIR || 'data'),
   templatesDir: path.join(ROOT, 'templates'),
-  trashDir: path.join(ROOT, 'trash'),
+  trashDir: path.join(HOME, 'trash'),
   webDist: path.join(ROOT, 'web', 'dist'),
   idleTimeoutMin: int(env.IDLE_TIMEOUT_MIN, 20, 0, 24 * 60),
   maxRunners: int(env.MAX_RUNNERS, 6, 1, 32),
