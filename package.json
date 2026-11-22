@@ -1,0 +1,27 @@
+{
+  "name": "agent-cockpit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lokales Web-Cockpit: mehrere Claude-Code-Sessions (Agent SDK) parallel steuern, Commands/Outputs live sehen, Usage-Prognose, Datei- und Video-Vorschau.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch-path=server server/index.js",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev",
+    "test": "node --test test/unit.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.330",
+    "@playwright/mcp": "^0.0.86",
+    "express": "^5.3.0",
+    "open": "^11.0.4",
+    "ws": "^8.23.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}

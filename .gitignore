@@ -1,0 +1,8 @@
+node_modules/
+web/node_modules/
+data/
+projects/
+trash/
+.env
+*.log
+# web/dist wird mitgeliefert, damit `npm start` ohne Build läuft.
