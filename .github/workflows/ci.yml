@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install
+        run: npm ci --no-fund --no-audit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build web UI
+        run: npm run build:web
+
+      - name: Server smoke test (mock mode)
+        shell: bash
+        env:
+          COCKPIT_MOCK: '1'
+          OPEN_BROWSER: 'false'
+        run: |
+          node server/index.js > server.log 2>&1 &
+          pid=$!
+          code=000
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4317/api/health || true)
+            [ "$code" = "401" ] && break
+            sleep 1
+          done
+          cat server.log
+          [ "$code" = "401" ] || { echo "::error::/api/health antwortet $code statt 401"; exit 1; }
+          curl -s http://localhost:4317/ | grep -q 'Cockpit einrichten' || { echo "::error::Einrichtungsseite fehlt"; exit 1; }
+          kill $pid || true
+
+      - name: Install Chromium (ARM runner has no Chrome)
+        if: matrix.node == 24 && matrix.os == 'ubuntu-24.04-arm'
+        run: |
+          npm run install:browser
+          sudo env "PATH=$PATH" node node_modules/playwright-core/cli.js install-deps chromium
+
+      - name: Browser end-to-end (headless + headed)
+        if: matrix.node == 24
+        shell: bash
+        env:
+          E2E_ENGINE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'chromium' || 'chrome' }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run test:browser; else npm run test:browser; fi

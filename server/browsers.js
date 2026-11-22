@@ -85,11 +85,24 @@ function browserMajor(exe) {
   try { return /(\d+)\.\d+\.\d+/.exec(execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 8000 }))?.[1] ?? null; } catch { return null; }
 }
 
+/** navigator.platform of a headed browser on this machine. */
+function navigatorPlatform() {
+  if (process.platform === 'win32') return 'Win32';
+  if (process.platform === 'darwin') return 'MacIntel'; // also on Apple Silicon
+  return `Linux ${process.arch === 'arm64' ? 'aarch64' : process.arch === 'arm' ? 'armv7l' : 'x86_64'}`;
+}
+
+/** A screen for headed browsers: Windows/macOS always, Linux with X11 or Wayland. */
+function hasScreen() {
+  return process.platform !== 'linux' || !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+}
+
 /** User agent of the headed browser – headless Chromium announces "HeadlessChrome", which many logins (Google) reject. */
 function headedUserAgent(exe, engine) {
   const major = browserMajor(exe);
   if (!major) return null;
-  const platform = process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : 'X11; Linux x86_64';
+  // what a real headed browser sends: Windows and macOS freeze this part (also on ARM), Linux shows the CPU
+  const platform = process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : `X11; ${navigatorPlatform()}`;
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36${engine === 'msedge' ? ` Edg/${major}.0.0.0` : ''}`;
 }
 
@@ -105,7 +118,7 @@ function headedUaMetadata(fullVersion, engine) {
   const platform = process.platform === 'win32' ? ['Windows', '15.0.0'] : process.platform === 'darwin' ? ['macOS', '14.0.0'] : ['Linux', ''];
   return {
     brands: list(major), fullVersionList: list(String(fullVersion)), fullVersion: String(fullVersion),
-    platform: platform[0], platformVersion: platform[1], architecture: process.arch.startsWith('arm') ? 'arm' : 'x86', bitness: '64', model: '', mobile: false, wow64: false,
+    platform: platform[0], platformVersion: platform[1], architecture: process.arch.startsWith('arm') ? 'arm' : 'x86', bitness: process.arch === 'arm' || process.arch === 'ia32' ? '32' : '64', model: '', mobile: false, wow64: false,
   };
 }
 
@@ -115,9 +128,14 @@ const portFree = (port) => new Promise((resolve) => {
   s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)));
 });
 
-async function waitForCdp(port, ms = 20_000) {
+async function waitForCdp(port, proc, ms = 20_000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
+    // e.g. no screen / missing libraries – don't wait 20 s for a process that is gone
+    if (proc && (proc.exitCode !== null || proc.signalCode !== null)) {
+      await new Promise((r) => setTimeout(r, 150)); // let the last stderr lines arrive
+      throw new UserError('Browser hat sich direkt nach dem Start beendet');
+    }
     try {
       const r = await fetch(`http://127.0.0.1:${port}/json/version`);
       if (r.ok) return await r.json();
@@ -279,7 +297,7 @@ export class Browsers extends EventEmitter {
   /** Linux server without a screen + Xvfb installed → real (headed) browser on a virtual display. */
   defaultHeadless() {
     // headed browsers look like a normal user to bot detection; only fall back to headless without a screen
-    return process.platform === 'linux' && !process.env.DISPLAY && !onPath('Xvfb');
+    return !hasScreen() && !onPath('Xvfb');
   }
 
   /** DISPLAY for headed browsers on a Linux server without a screen (starts one shared Xvfb). */
@@ -297,7 +315,7 @@ export class Browsers extends EventEmitter {
     return fs.existsSync(`/tmp/.X11-unix/X${n}`) ? this.xvfb?.display ?? null : null;
   }
 
-  async start(id) {
+  async start(id, { forceHeadless = false, noSandbox = false } = {}) {
     const p = this.get(id);
     if (this.running.has(id)) return;
     if (this.running.size >= this.ctx.config.maxBrowsers) throw new UserError(`Schon ${this.ctx.config.maxBrowsers} Browser offen (MAX_BROWSERS) – erst einen stoppen.`);
@@ -328,13 +346,14 @@ export class Browsers extends EventEmitter {
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
     ];
-    let headless = p.headless;
+    let headless = p.headless || forceHeadless;
     let env = process.env;
-    if (!headless && process.platform === 'linux' && !process.env.DISPLAY) {
+    if (!headless && !hasScreen()) {
       const display = await this.#display();
       if (display) env = { ...process.env, DISPLAY: display };
       else headless = true; // no screen and no Xvfb
     }
+    if (!headless && process.platform === 'linux') args.push('--ozone-platform-hint=auto'); // native Wayland or X11
     if (headless) {
       args.push('--headless=new');
       const ua = headedUserAgent(exe, p.engine);
@@ -343,7 +362,7 @@ export class Browsers extends EventEmitter {
     if (p.proxy) args.push(`--proxy-server=${p.proxy}`);
     if (p.lang) args.push(`--lang=${p.lang}`);
     await writeLanguagePrefs(userDir, acceptLanguages(p)).catch(() => {});
-    if (process.platform === 'linux' && process.getuid?.() === 0) args.push('--no-sandbox');
+    if (noSandbox || (process.platform === 'linux' && process.getuid?.() === 0)) args.push('--no-sandbox');
     args.push(p.startUrl || 'about:blank');
 
     const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
@@ -357,12 +376,12 @@ export class Browsers extends EventEmitter {
       });
       proc.on('exit', () => this.#onExit(id, entry));
       try {
-        await waitForCdp(port);
+        await waitForCdp(port, proc);
         entry.browser = await withTimeout(chromium.connectOverCDP(`http://127.0.0.1:${port}`), 20_000, 'CDP-Verbindung');
         entry.context = entry.browser.contexts()[0];
         if (headless) {
           const ua = headedUserAgent(exe, p.engine) ?? (await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.userAgent.replace('HeadlessChrome', 'Chrome')).catch(() => null));
-          if (ua) entry.uaPatch = { userAgent: ua, platform: process.platform === 'win32' ? 'Win32' : process.platform === 'darwin' ? 'MacIntel' : 'Linux x86_64', userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine) };
+          if (ua) entry.uaPatch = { userAgent: ua, platform: navigatorPlatform(), userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine) };
         }
         entry.statsTimer = setInterval(() => this.#tickStream(entry), 1500);
         entry.context.on('page', (page) => { this.#watchPage(entry, page); this.#activate(entry, page).catch(() => {}); });
@@ -373,14 +392,29 @@ export class Browsers extends EventEmitter {
       } catch (e) {
         try { proc.kill(); } catch { /* gone */ }
         this.running.delete(id);
-        throw e instanceof UserError ? e : new UserError(`Browser-Start fehlgeschlagen: ${e.message}\n${entry.log.slice(-3).join('')}`);
+        const detail = entry.log.slice(-3).join('').trim();
+        throw new UserError(`${e instanceof UserError ? e.message : `Browser-Start fehlgeschlagen: ${e.message}`}${detail ? `\n${detail}` : ''}`);
       } finally {
         entry.starting = null;
         this.emitList();
       }
     })();
     this.emitList();
-    await entry.starting;
+    try {
+      await entry.starting;
+    } catch (e) {
+      await new Promise((r) => setTimeout(r, 300)); // let the profile lock go
+      // Ubuntu ≥ 23.10 (AppArmor) blocks the sandbox of browsers without their own profile, e.g. the bundled Chromium
+      if (process.platform === 'linux' && !noSandbox && /sandbox/i.test(e.message)) {
+        console.warn(`[browser] ${id}: Sandbox nicht verfügbar, starte mit --no-sandbox`);
+        return this.start(id, { forceHeadless, noSandbox: true });
+      }
+      // A visible window can fail where headless works (macOS without GUI login, Linux without
+      // display libraries). Better a running browser than none – the profile setting stays.
+      if (headless) throw e;
+      console.warn(`[browser] ${id}: sichtbarer Start fehlgeschlagen, versuche headless – ${e.message.split('\n')[0]}`);
+      return this.start(id, { forceHeadless: true, noSandbox });
+    }
   }
 
   #onExit(id, entry) {
@@ -740,7 +774,7 @@ export class Browsers extends EventEmitter {
   }
 
   status() {
-    return { bundled: !!findBrowserExecutable('chromium'), chrome: !!findBrowserExecutable('chrome'), msedge: !!findBrowserExecutable('msedge'), install: this.install, path: process.env.PLAYWRIGHT_BROWSERS_PATH, defaultHeadless: this.defaultHeadless(), virtualDisplay: process.platform === 'linux' && !process.env.DISPLAY };
+    return { bundled: !!findBrowserExecutable('chromium'), chrome: !!findBrowserExecutable('chrome'), msedge: !!findBrowserExecutable('msedge'), install: this.install, path: process.env.PLAYWRIGHT_BROWSERS_PATH, defaultHeadless: this.defaultHeadless(), virtualDisplay: !hasScreen() };
   }
 }
 

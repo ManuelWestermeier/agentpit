@@ -26,6 +26,13 @@ Voraussetzungen: Node.js ≥ 22.13 (24 LTS empfohlen: `winget install OpenJS.Nod
 
 Der Server gibt `http://localhost:4317/?token=…` aus und öffnet ihn. Beim ersten Öffnen legst du das Passwort fest – ab dann schützt es jeden Zugriff (siehe „Zugriffsschutz“).
 
+## Start unter macOS und Linux (Desktop)
+
+```bash
+./start.sh       # oder unter macOS: Doppelklick auf start.command
+```
+Gleiches Verhalten wie `start.cmd`: prüft Node (≥ 22.13), installiert beim ersten Mal, baut die Oberfläche, startet. Voraussetzungen macOS: `brew install node@24 ffmpeg gh` (git über `xcode-select --install`). Linux: Node 24 von nodejs.org/NodeSource, `sudo apt install git ffmpeg` (optional `xvfb` für sichtbare Browser ohne Bildschirm). Browser-Identitäten nutzen Chrome/Edge oder den mitgelieferten Chromium. Ohne Bildschirm (Server) siehe nächster Abschnitt.
+
 ## Jetson Orin Nano (oder anderer Linux-Server) mit Fernzugriff
 
 ```bash
@@ -52,7 +59,7 @@ Manuell statt Skript: beliebiger HTTPS-Tunnel oder Reverse-Proxy auf 127.0.0.1:4
 - Lokal (Link aus der Konsole, öffnet sich beim Start automatisch): Passwort direkt in der Oberfläche festlegen.
 - Über Domain/Tunnel: Einrichtungscode aus der Server-Konsole bzw. `npm run link` eingeben, dann Passwort. Ohne Code kann niemand das Passwort setzen, auch wenn der Tunnel schon öffentlich ist.
 
-**Danach:** Jede Adresse verlangt das Passwort (min. 12 Zeichen, scrypt). Sitzungen sind einzeln widerrufbar (Konten → Zugriff → Angemeldete Geräte), laufen nach 30 Tagen Inaktivität ab, und ein Passwortwechsel meldet alle anderen Geräte ab. Neue Adressen (z. B. die Tunnel-Domain) werden automatisch freigegeben, sobald du dich dort mit dem Passwort anmeldest; vorher bekommen sie nur die Login-Seite. Passwort vergessen: `npm run set-password` auf dem Server.
+**Danach:** Jede Adresse verlangt das Passwort (min. 4 Zeichen, scrypt – über Domain/Tunnel ein längeres wählen). Sitzungen sind einzeln widerrufbar (Konten → Zugriff → Angemeldete Geräte), laufen nach 30 Tagen Inaktivität ab, und ein Passwortwechsel meldet alle anderen Geräte ab. Neue Adressen (z. B. die Tunnel-Domain) werden automatisch freigegeben, sobald du dich dort mit dem Passwort anmeldest; vorher bekommen sie nur die Login-Seite. Passwort vergessen: `npm run set-password` auf dem Server.
 
 **Tunnel/Proxy** – immer auf `http://127.0.0.1:4317` zeigen lassen, der Server bleibt auf loopback:
 
@@ -86,8 +93,11 @@ Empfehlung bei öffentlicher Domain: zusätzlich **Cloudflare Access** (Zero Tru
 
 ## Browser-Identitäten
 
-- Jede Identität ist ein eigenes Chromium-Profil (`data/browsers/<id>`): Cookies, localStorage, IndexedDB, Logins komplett getrennt. „Temporär“ löscht das Profil beim Beenden. Pro Identität optional Proxy und Sprache.
+- Jede Identität ist ein eigenes Chromium-Profil (`data/browsers/<id>`): Cookies, localStorage, IndexedDB, Logins komplett getrennt. „Temporär“ löscht das Profil beim Beenden.
+- Pro Identität einstellbar: Sprache (Standard Deutsch, `de-DE`), bevorzugte Sprachen (Accept-Language), Zeitzone (Standard: System), Farbschema der Seiten, Proxy. Zeitzone und Farbschema wirken sofort, Sprache/Proxy/Browser nach Neustart des Browsers. Gegen Bot-Erkennung: Sprache und Zeitzone passend zur IP lassen, Identitäten als echtes Fenster starten (Standard, sobald ein Bildschirm da ist).
 - Live-Bild per CDP-Screencast, Eingaben (Maus, Rad, Tastatur, Touch, Einfügen) gehen direkt an die Seite. „An Fenster anpassen“ setzt die Viewport-Größe. Auf dem Handy öffnet das Tastatur-Symbol die Bildschirmtastatur.
+- **Stream-Qualität** (Tacho-Symbol in der Browser-Ansicht, live mit Bildrate, Datenrate, Bildgröße): Standard **Auto** – Qualität, Auflösung und Bildrate folgen der gemessenen Verbindung (bei Stau in ~3 s herunter, bei freier Leitung schrittweise wieder hoch). **Manuell**: JPEG-Qualität, max. Breite, max. Bildrate, JPEG/PNG, Voreinstellungen von „Beste Qualität“ bis „Mobilfunk“. Es wird nie ein Bildstau aufgebaut: ist die Leitung belegt, kommt nur das jeweils neueste Bild an.
+- Startet ein sichtbares Fenster nicht (macOS ohne Anmeldung am Desktop, Linux ohne Grafik-Bibliotheken), fällt das Cockpit automatisch auf headless zurück; blockiert AppArmor (Ubuntu ≥ 23.10) die Sandbox des mitgelieferten Chromium, wird ohne Sandbox gestartet.
 - **Mit Claude verknüpfen** (Tab Browser oder Projekteinstellungen): Claude steuert dann genau diesen Browser über Playwright MCP (`--cdp-endpoint`) – du siehst jede Aktion live und kannst jederzeit eingreifen, z. B. Logins/2FA selbst erledigen. Ohne Verknüpfung bekommt jede Session einen isolierten, unsichtbaren Browser.
 - Google-Login: In headless Chromium wird er oft abgelehnt. Auf Linux-Servern ohne Bildschirm laufen Identitäten deshalb standardmäßig als echtes Fenster auf einem virtuellen Display (Xvfb, wird automatisch gestartet); im Headless-Modus wird zumindest der „HeadlessChrome“-User-Agent ersetzt. `navigator.webdriver` ist in beiden Fällen `false`. Garantien gibt es bei Googles Risikoprüfung nicht – Anmeldung immer selbst durchführen, nie Passwörter an Claude geben.
 - „Claude in Chrome“ (die Erweiterung) ist ein eigenes Produkt, das an deinen Desktop-Chrome gebunden ist. Hier übernimmt Playwright MCP über CDP dieselbe Rolle auf der Identität (gleiche Cookies und Logins). Die Erweiterung lässt sich per Fernsteuerung in einem Chrome-Profil installieren; Claude Codes `--chrome`-Anbindung daran ist nicht getestet.
@@ -150,6 +160,8 @@ templates/default/  Projektvorlage (CLAUDE.md, Skills video/browser, Rechte)
 deploy/jetson/      Installationsskript Linux/Jetson
 test/               Unit-Tests (npm test), Mock-SDK
 ```
+Tests: `npm test` (Unit), `npm run test:browser` (echter Browser: Identität, Stream, Auto-Regelung; Linux ohne Bildschirm mit `xvfb-run -a`). Die GitHub-Actions-CI führt beides auf Windows, macOS, Linux x64 und Linux arm64 mit Node 22 und 24 aus.
+
 Entwicklung: `COCKPIT_MOCK=1 npm start` (simulierte Sessions, keine Kosten); UI mit Hot Reload: Server mit `DEV_ORIGINS=http://localhost:5173`, Token-Link öffnen, `npm run dev:web`.
 
 ## Probleme

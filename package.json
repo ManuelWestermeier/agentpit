@@ -13,6 +13,7 @@
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "dev:web": "npm --prefix web run dev",
     "test": "node --test test/unit.test.js",
+    "test:browser": "node --test --test-concurrency=1 test/browser.e2e.test.js",
     "set-password": "node scripts/set-password.mjs",
     "link": "node scripts/link.mjs",
     "install:browser": "node scripts/install-browser.mjs"
