@@ -45,7 +45,6 @@ interface State {
   preview: { path: string; at: number } | null;
   toasts: Toast[];
   loginOpen: boolean;
-  newProjectOpen: boolean;
   draft: Record<string, string>;
 
   init(): void;
@@ -223,7 +222,6 @@ export const useStore = create<State>()((set, get) => {
     preview: null,
     toasts: [],
     loginOpen: false,
-    newProjectOpen: false,
     draft: {},
 
     set: (p) => set(p),
@@ -285,6 +283,20 @@ export const useStore = create<State>()((set, get) => {
 });
 
 /** Helper for actions that should report failures as a toast. */
+/**
+ * New project in one click: no name, no options. Claude Haiku names it from the first prompt
+ * (server/meta.js); model, mode and browser come from the defaults and can be changed in settings.
+ */
+export async function newProject() {
+  const p = await act(() => conn.call<Project>('project.create', { project: { name: 'Neues Projekt' } }));
+  if (!p) return;
+  const st = useStore.getState();
+  if (!st.projects.some((x) => x.id === p.id)) useStore.setState({ projects: [p, ...st.projects] });
+  useStore.setState({ tab: 'session', profileView: null });
+  await st.selectProject(p.id);
+  setTimeout(() => (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus(), 50);
+}
+
 export async function act<T>(fn: () => Promise<T>, okText?: string): Promise<T | undefined> {
   try {
     const r = await fn();

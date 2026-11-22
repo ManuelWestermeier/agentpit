@@ -9,11 +9,9 @@ const TABS: [Tab, string][] = [['session', 'Session'], ['browser', 'Browser'], [
 
 export function Header({ onToggleSide }: { onToggleSide: () => void }) {
   const { project, runner } = useActive();
-  const view = useStore((s) => s.view);
   const tab = useStore((s) => s.tab);
   const profileView = useStore((s) => s.profileView);
   const profile = useStore((s) => s.browsers?.profiles.find((p) => p.id === s.profileView));
-  const sessions = useStore((s) => (s.activeId ? s.sessions[s.activeId] : undefined));
   const [settings, setSettings] = useState(false);
   const now = useNow(1000, !!runner?.turn);
 
@@ -41,8 +39,7 @@ export function Header({ onToggleSide }: { onToggleSide: () => void }) {
   const st = runner?.pending?.length ? 'waiting' : runner?.state ?? 'idle';
   // state only when something is going on – idle/ready is the normal case and says nothing
   const showState = st === 'running' || st === 'waiting' || st === 'starting' || st === 'error';
-  const sessionTitle = sessions?.find((s) => s.sessionId === view?.sessionId)?.title;
-  const sub = showState || runner?.compacting || sessionTitle;
+  const sub = showState || runner?.compacting || project.description;
   return (
     <header className="header has-tabs">
       <div className="header-row">
@@ -54,7 +51,7 @@ export function Header({ onToggleSide }: { onToggleSide: () => void }) {
               {showState && <span className="state-pill"><span className={`tally ${st}`} />{STATE_LABEL[st]}</span>}
               {runner?.turn && <span className="tab-nums">{fmtDuration(now - runner.turn.startedAt)}</span>}
               {runner?.compacting && <span style={{ color: 'var(--blue)' }}>komprimiert …</span>}
-              {sessionTitle && <span className="ellipsis" title={view?.sessionId ?? ''}>{sessionTitle}</span>}
+              {!showState && !runner?.compacting && project.description && <span className="ellipsis" title={project.description}>{project.description}</span>}
             </div>
           )}
         </div>

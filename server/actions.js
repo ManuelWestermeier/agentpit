@@ -24,7 +24,9 @@ export function createActions(ctx) {
     'project.update': async (msg) => {
       const id = pid(msg);
       const before = await projects.get(id);
-      const updated = await projects.update(id, msg.patch ?? {});
+      const patch = { ...(msg.patch ?? {}) };
+      if (typeof patch.name === 'string' && patch.name.trim() && patch.name.trim() !== before.name) patch.autoTitle = false; // named by the user
+      const updated = await projects.update(id, patch);
       const r = runners.peek(id);
       if (r) {
         r.project = updated;

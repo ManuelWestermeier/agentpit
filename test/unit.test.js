@@ -7,6 +7,7 @@ import { Files } from '../server/files.js';
 import { Limits } from '../server/limits.js';
 import { Janitor, trashTime } from '../server/janitor.js';
 import { Media } from '../server/media.js';
+import { Meta } from '../server/meta.js';
 import { Projects, SHARED_DIR_NAME } from '../server/projects.js';
 import { Schedules, nextCron, parseCron } from '../server/schedules.js';
 import { parseCookies } from '../server/security.js';
@@ -211,6 +212,45 @@ test('Janitor: deletes only disposable files, keeps results, inputs, shared fold
   await new Janitor(ctx).run(now);
   assert.ok(fs.existsSync(cache2));
   assert.equal(trashTime('x-2026-11-22T17-28-05-369Z-files'), Date.parse('2026-11-22T17:28:05.369Z'));
+});
+
+test('Meta: Haiku names project and session, writes META.md, keeps a name the user set', async () => {
+  const root = tmp('meta');
+  const store = new Store(path.join(root, 'data'));
+  await store.init();
+  const projects = new Projects({ config: { projectsDir: path.join(root, 'projects'), templatesDir: path.join(root, 'tpl'), defaultModel: '', defaultMode: 'default', defaultEffort: '', browserMcp: true, permissionModes: ['default'], allowBypass: false }, store });
+  const p = await projects.create({ name: 'Neues Projekt', git: false });
+  const asked = [];
+  let answer = '{"titel": "„LinkedIn-Profil für X“.", "beschreibung": "Überträgt Texte und Bilder vom LinkedIn-Profil auf X", "session": "Profilbild und Banner zuschneiden 🎨"}';
+  const ctx = {
+    store, projects, config: { claudeBin: '' }, sessions: { invalidate() {} }, runners: { peek: () => null },
+    metaQuery: ({ prompt, options }) => { asked.push({ prompt, options }); return (async function* () { yield { type: 'result', result: answer }; })(); },
+  };
+  const meta = new Meta(ctx);
+  const sid = '11111111-1111-4111-8111-111111111111';
+  await store.writeStats(p.id, sid, { firstPrompt: 'x' });
+  // prompts as the runner records them (onPrompt), then one naming pass without timers
+  await store.writeJson(store.p('meta', `${p.id}.json`), { prompts: [{ sessionId: sid, text: 'Mach mein X wie mein LinkedIn', ts: Date.now() }], sessionCounts: { [sid]: 1 }, sessions: {} });
+  const r = await meta.generate(p.id, sid);
+  assert.equal(r.title, 'LinkedIn-Profil für X', 'Anführungszeichen und Punkt entfernt');
+  assert.equal(r.session, 'Profilbild und Banner zuschneiden', 'Emoji entfernt');
+  const after = await projects.get(p.id);
+  assert.equal(after.name, 'LinkedIn-Profil für X');
+  assert.equal(after.description, 'Überträgt Texte und Bilder vom LinkedIn-Profil auf X.');
+  assert.equal((await store.readStats(p.id, sid)).title, 'Profilbild und Banner zuschneiden');
+  const md = fs.readFileSync(path.join(after.dir, 'META.md'), 'utf8');
+  assert.match(md, /^# LinkedIn-Profil für X\n\nÜberträgt Texte/);
+  assert.match(md, /## Sessions\n\n- \d{4}-\d{2}-\d{2} Profilbild und Banner zuschneiden/);
+  const opts = asked.at(-1).options;
+  assert.deepEqual([opts.model, opts.maxTurns, opts.tools.length, opts.persistSession, opts.settingSources.length], ['haiku', 1, 0, false, 0]);
+  assert.match(asked.at(-1).prompt, /Mach mein X wie mein LinkedIn/);
+  // the user renamed it → Haiku may update the description but not the name
+  await projects.update(p.id, { name: 'Mein Name', autoTitle: false });
+  answer = '{"titel": "Etwas anderes", "beschreibung": "Neue Beschreibung", "session": "S"}';
+  await meta.generate(p.id, sid);
+  const final = await projects.get(p.id);
+  assert.equal(final.name, 'Mein Name');
+  assert.equal(final.description, 'Neue Beschreibung.');
 });
 
 test('AsyncQueue delivers in order and ends on close', async () => {

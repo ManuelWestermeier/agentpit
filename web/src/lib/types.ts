@@ -18,6 +18,10 @@ export interface Project {
   dir: string;
   /** set when another session's Claude started this one (sub-session) */
   parentId?: string;
+  /** one sentence, written by Claude Haiku from the prompts (server/meta.js) */
+  description?: string;
+  /** false once the user named the project themselves */
+  autoTitle?: boolean;
 }
 
 export interface ModelStats {

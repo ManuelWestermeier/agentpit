@@ -15,6 +15,8 @@ Pro Projekt fünf Bereiche:
 
 Links: Projekte mit Sessions, Browser-Identitäten, Konten (Claude, GitHub). Oben rechts: Verbrauch & Limit-Prognose.
 
+Neues Projekt: „+“ – sofort losschreiben, ohne Namen oder Einstellungen. Titel und Beschreibung des Projekts sowie kurze Session-Titel schreibt Claude Haiku aus dem ersten und den weiteren Prompts (im Hintergrund, nach den ersten beiden Prompts einer Session und dann jeden fünften); sie stehen in der Oberfläche und in `META.md` im Projektordner. Benennst du ein Projekt in den Einstellungen selbst um, bleibt dein Name.
+
 Technik: offizielles Claude Agent SDK (bringt sein Claude-Code-Binary für Windows/macOS/Linux x64+arm64 mit), Playwright MCP, playwright-core (CDP), React/Vite (vorgebaut in `web/dist`).
 
 ## Start unter Windows

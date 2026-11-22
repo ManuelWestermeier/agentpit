@@ -4,7 +4,7 @@ import { useState } from 'react';
 const HINTS_KEY = 'cockpit.hiddenHints';
 import { STATE_LABEL, fmtAgo, fmtUsd } from '../lib/format';
 import { useNow } from '../lib/hooks';
-import { act, useStore } from '../lib/store';
+import { act, newProject, useStore } from '../lib/store';
 import type { Project, RunnerStatus, SessionInfo } from '../lib/types';
 import { conn } from '../lib/ws';
 import { ProfileDialog } from './ProfileDialog';
@@ -32,7 +32,7 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       <div className="side-scroll">
         <div className="side-head">
           <span>Projekte</span>
-          <button className="btn ghost icon small" title="Neues Projekt" onClick={() => useStore.setState({ newProjectOpen: true })}><Plus size={14} /></button>
+          <button className="btn ghost icon small" title="Neues Projekt" onClick={() => { newProject(); onNavigate(); }}><Plus size={14} /></button>
         </div>
         <div className="side-section">
           {projects.map((p) => {
@@ -60,7 +60,7 @@ function ProjectRow({ project, runner, active, onClick }: { project: Project; ru
     : busy ? STATE_LABEL[st] : fmtAgo(project.updatedAt);
   return (
     <button className={`proj${active ? ' active' : ''}${project.parentId ? ' proj--sub' : ''}`} onClick={onClick}
-      title={project.parentId ? `${project.dir}\nSub-Session, gestartet von „${project.parentId}“` : project.dir}>
+      title={[project.description, project.parentId ? `Sub-Session von „${project.parentId}“` : '', project.dir].filter(Boolean).join('\n')}>
       <span className={`tally ${busy ? st : 'none'}`} aria-label={busy ? STATE_LABEL[st] : undefined} />
       <span className="proj-name">{project.parentId && <span className="proj-sub" aria-label="Sub-Session">↳ </span>}{project.name}</span>
       <span className={`proj-meta${st === 'waiting' ? ' waiting' : ''}`}>{meta}</span>
@@ -91,7 +91,7 @@ function SessionList({ project, runner }: { project: Project; runner?: RunnerSta
 
   return (
     <div className="sess-list">
-      <button className="sess" onClick={fresh}><span className="sess-title sess-new"><SquarePen size={12} /> Neue Session</span></button>
+      {list.length > 0 && <button className="sess" onClick={fresh}><span className="sess-title sess-new"><SquarePen size={12} /> Neue Session</span></button>}
       {shown.map((s) => {
         const live = !!runner?.live && runner.sessionId === s.sessionId;
         return (

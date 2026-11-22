@@ -382,7 +382,10 @@ export class Runner extends EventEmitter {
     this.lastActivityAt = Date.now();
     if (!busy) this.#beginTurn();
     if (!this.stats.firstPrompt && !prompt.startsWith('/')) this.stats.firstPrompt = prompt.slice(0, 200);
-    if (!prompt.startsWith('/')) this.lastPrompt = prompt;
+    if (!prompt.startsWith('/')) {
+      this.lastPrompt = prompt;
+      this.ctx.meta?.onPrompt(this.projectId, this.sessionId, prompt); // titles via Haiku, in the background
+    }
     this.#log('cockpit', 'user_prompt', { text: prompt, uuid: id, queued: busy, source: opts.source ?? null });
     this.saveStats();
     this.emitStatus();

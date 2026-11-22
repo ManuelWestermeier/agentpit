@@ -54,7 +54,7 @@ export class Sessions {
         e.costUsd = st.costUsd;
         e.turns = st.turns;
         e.forkedFrom = st.forkedFrom ?? null;
-        e.title = e.title || st.firstPrompt;
+        e.title = st.title || e.title || st.firstPrompt; // Haiku title first (server/meta.js)
         e.createdAt = e.createdAt ?? st.createdAt;
       }
       e.title = e.title || 'Neue Session';

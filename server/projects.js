@@ -134,6 +134,8 @@ export class Projects extends EventEmitter {
       out.browserProfile = p.browserProfile;
     }
     if (typeof p.autoCommit === 'boolean') out.autoCommit = p.autoCommit;
+    // false once the user named the project – then Haiku (server/meta.js) leaves the name alone
+    if (typeof p.autoTitle === 'boolean') out.autoTitle = p.autoTitle;
     // sub-session: started by another project's Claude (shown as its child)
     if (typeof p.parentId === 'string' && (p.parentId === '' || isProjectId(p.parentId))) out.parentId = p.parentId;
     if (p.rotateHookToken === true) out.hookToken = crypto.randomBytes(24).toString('base64url');

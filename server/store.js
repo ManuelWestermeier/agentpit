@@ -27,7 +27,7 @@ export class Store {
   }
 
   async init() {
-    for (const d of ['projects', 'logs', 'sessions', 'media', 'browser', 'probe']) {
+    for (const d of ['projects', 'logs', 'sessions', 'media', 'browser', 'probe', 'meta']) {
       await fsp.mkdir(path.join(this.dir, d), { recursive: true });
     }
   }

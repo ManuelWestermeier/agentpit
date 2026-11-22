@@ -9,6 +9,7 @@ import { Browsers } from './browsers.js';
 import { CdpRelay } from './cdp-relay.js';
 import { Databases } from './databases.js';
 import { Janitor } from './janitor.js';
+import { Meta } from './meta.js';
 import { Schedules } from './schedules.js';
 import { Git } from './git.js';
 import { GitHub } from './github.js';
@@ -70,6 +71,7 @@ async function main() {
   ctx.relay = new CdpRelay();
   ctx.schedules = new Schedules(ctx);
   ctx.janitor = new Janitor(ctx);
+  ctx.meta = new Meta(ctx);
   ctx.databases = new Databases(ctx);
   ctx.services = new Services(ctx);
   ctx.localUrl = `http://127.0.0.1:${port}`;

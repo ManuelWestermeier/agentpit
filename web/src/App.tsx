@@ -6,13 +6,12 @@ import { DataView } from './components/DataView';
 import { FilesView } from './components/FilesView';
 import { GitView } from './components/GitView';
 import { Header } from './components/Header';
-import { NewProjectDialog } from './components/NewProjectDialog';
 import { ProjectBrowser } from './components/ProjectBrowser';
 import { SessionView } from './components/SessionView';
 import { Sidebar } from './components/Sidebar';
 import { Toasts } from './components/Toasts';
 import { UsageDrawer } from './components/UsageDrawer';
-import { useStore } from './lib/store';
+import { newProject, useStore } from './lib/store';
 
 const ServicesView = lazy(() => import('./components/ServicesView'));
 
@@ -24,7 +23,6 @@ export function App() {
   const tab = useStore((s) => s.tab);
   const profileView = useStore((s) => s.profileView);
   const loginOpen = useStore((s) => s.loginOpen);
-  const newProjectOpen = useStore((s) => s.newProjectOpen);
   const usageOpen = useStore((s) => s.usageOpen);
   const pendingCount = useStore((s) => Object.values(s.runners).reduce((n, r) => n + (r.pending?.length ?? 0), 0));
   const [showSide, setShowSide] = useState(false);
@@ -46,9 +44,7 @@ export function App() {
   else if (!activeId) {
     body = (
       <div className="empty">
-        <h2>Kein Projekt</h2>
-        <p>Jedes Projekt ist ein Ordner unter <code>projects/</code> mit eigenem Git-Repository, in dem Claude Code arbeitet.</p>
-        <button className="btn primary" onClick={() => useStore.setState({ newProjectOpen: true })}>Projekt anlegen</button>
+        <button className="btn primary" onClick={() => newProject()}>Neues Projekt</button>
       </div>
     );
   } else if (tab === 'session') body = <SessionView />;
@@ -69,7 +65,6 @@ export function App() {
       {usageOpen && <UsageDrawer />}
       <Toasts />
       {loginOpen && <AccountsDialog />}
-      {newProjectOpen && <NewProjectDialog />}
       {!hello.config.hasPassword && <SetupPassword />}
       {!connected && <div className="offline">Verbindung getrennt – verbinde neu …</div>}
     </div>
