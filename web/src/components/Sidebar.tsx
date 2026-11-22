@@ -161,7 +161,7 @@ function SideFoot() {
       </button>
       <button className="acct" onClick={() => useStore.setState({ loginOpen: true })} title="Konten verwalten">
         <span className="tally none" />
-        <span className="acct-name">GitHub{github?.status?.loggedIn ? ` · ${github.status.login}` : github?.status?.installed === false ? ' – gh fehlt' : ' – verbinden'}</span>
+        <span className="acct-name">GitHub{github?.status?.loggedIn ? ` · ${github.status.login}` : github?.status?.installed === false ? '' : ' – verbinden'}</span>
       </button>
       {hello.env.hints.filter((h) => !hidden.includes(h.key)).map((h) => {
         const job = hello.installs?.[h.key];

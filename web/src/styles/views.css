@@ -185,6 +185,9 @@ details.adv .muted { font-weight: 400; color: var(--text-2); }
 .hook summary { cursor: pointer; color: var(--text-2); font-size: var(--t-xs); }
 .hook summary:hover { color: var(--text); }
 .hook p { margin: 8px 0; }
+.svc-adv { margin-top: 12px; }
+.svc-adv summary { cursor: pointer; color: var(--text-2); font-size: var(--t-xs); margin-bottom: 10px; }
+.svc-adv summary:hover { color: var(--text); }
 .hook-code { margin: 0 0 8px; font: 400 10.5px/1.5 var(--mono); background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; white-space: pre; overflow: auto; color: var(--text); }
 
 .db-schema-head { padding: 14px 14px 0; }

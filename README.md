@@ -110,9 +110,10 @@ Empfehlung bei öffentlicher Domain: zusätzlich **Cloudflare Access** (Zero Tru
 
 - **Gemeinsamer Ordner `projects/shared-claude/`** (aus jedem Projekt `../shared-claude/`): alle Sessions dürfen dort lesen und schreiben – für Wissen, Datensätze und Übergaben zwischen Sessions. Wird beim ersten Start mit einer `README.md` angelegt und nie als Projekt angezeigt. Keine Zugangsdaten dort ablegen.
 - **Sub-Sessions:** Claude startet mit `session_create` weitere Sessions (eigenes Projekt, erbt Modell und Berechtigungsmodus, optional eigene Browser-Identität) und steuert sie mit `session_send`, `session_status`, `session_wait`, `session_stop`, `session_list`. In der Seitenleiste sind sie mit „↳“ markiert. Beispiel-Pipeline: Session 1 recherchiert Videos → legt die Liste in `shared-claude/pipelines/…` ab → Session 2 schneidet Clips → Sessions 3 und 4 veröffentlichen je in einer eigenen Identität/einem eigenen Account. Grenzen: höchstens 3 Ebenen, 12 neue Sessions pro Stunde und Session, gleichzeitig `MAX_RUNNERS`.
-- **Zeitpläne** (Tab Dienste → Zeitpläne, oder Claude mit `schedule_create`): ein Prompt einmalig, alle n Minuten oder per Cron (`0 9 * * 1-5`, Ortszeit) an eine Session. Gespeichert in `data/schedules.json`; während das Cockpit aus war, verpasste Läufe werden nicht nachgeholt (einmalige bis 6 h verspätet schon). Ist `MAX_RUNNERS` erreicht, wird jede Minute erneut versucht.
+- **Zeitpläne** (Tab Microservices → Zeitpläne, oder Claude mit `schedule_create`): ein Prompt einmalig, alle n Minuten oder per Cron (`0 9 * * 1-5`, Ortszeit) an eine Session. Gespeichert in `data/schedules.json`; während das Cockpit aus war, verpasste Läufe werden nicht nachgeholt (einmalige bis 6 h verspätet schon). Ist `MAX_RUNNERS` erreicht, wird jede Minute erneut versucht.
 - Claude richtet Einrichtbares selbst ein, statt dich darum zu bitten: Datenbankverbindungen (`db_connect`, SQLite oder mit von dir genannten Zugangsdaten), Dienste, Zeitpläne, Identitäten, Sub-Sessions. `browser_info` zeigt je Identität, bei welchen Diensten sie angemeldet ist (aus den Login-Cookies, ohne Seitenaufruf). Nur Logins, Passwörter und 2FA erledigst immer du.
 - Freigaben: Lesende Werkzeuge und der Identitätswechsel laufen ohne Rückfrage; neue Sessions starten, Prompts senden und Zeitpläne anlegen fragen im Modus „default“ nach (mit „Immer erlauben“ dauerhaft freigebbar). Freigaben einer Sub-Session erteilst du in deren Projekt.
+- **Zugriff auf Fremdes fragt immer – auch im Auto-Modus:** Datenbanken anderer Projekte (lesen/schreiben getrennt), Sessions, die nicht die eigenen Sub-Sessions sind, und Browser-Identitäten, die nicht mit dem Projekt verknüpft sind. „Immer erlauben“ merkt sich die Freigabe im Projekt; die Liste steht in den Projekteinstellungen unter „Dauerhafte Freigaben“ und lässt sich dort entziehen.
 
 ## Automatisches Aufräumen
 
@@ -146,9 +147,26 @@ await fetch(process.env.COCKPIT_HOOK_URL, { method: 'POST',
 ```
 Der Text landet als Prompt in der Session (läuft sie, wird er eingereiht). Limit: 1 Nachricht / 2 s. Token erneuern: Projekteinstellungen.
 
+Unter „Erweitert“ (bzw. als Felder in `cockpit.services.json`): `port` (als `PORT` übergeben, URL daraus abgeleitet), `health` (Pfad oder URL, alle 10 s geprüft), `restart` (`no`, `on-failure`, `always`; Wartezeit 1–16 s, höchstens 5 Neustarts in 10 min), `dependsOn` (IDs, die vorher gestartet werden). Der Tab **Microservices** zeigt mit „Alle Projekte“ die Dienste sämtlicher Projekte samt Logs.
+
 ## Datenbanken
 
 Verbindungen liegen in `data/db/<projekt>.json` (nicht im Repo). Lesen läuft in Read-only-Transaktionen bzw. mit Read-only-Handle, max. 500 Zeilen, 30 s. Schreiben nur, wenn an der Verbindung erlaubt – und Claudes `db_execute` fragt trotzdem jedes Mal. Empfehlung: eigener DB-Nutzer mit minimalen Rechten, für Produktion nur Lesezugriff oder eine Kopie.
+
+- Claude legt mit `db_create` selbst SQLite-Datenbanken im Projekt an (`data/<name>.db`, beschreibbar) und kann mit dem Parameter `project` Verbindungen anderer Projekte nutzen (fragt vorher, siehe Freigaben).
+- **Diagramme:** `db_chart` (direkt aus einer SQL-Abfrage) und `chart_create` (aus eigenen Werten) schreiben eigenständige HTML-Seiten nach `output/charts/` – Balken, Linie, Fläche, Streuung, hell/dunkel, Werte beim Überfahren, Tabellenansicht. Ohne Skripte, daher sicher in der Dateivorschau.
+
+## Limits pro Antwort
+
+„Limit“ unter dem Eingabefeld setzt Obergrenzen für jede einzelne Antwort: Kosten in $, Anteil am 5-h-Limit in %, Dauer in Minuten, Anzahl Schritte (API-Aufrufe). Wird eine erreicht, bricht das Cockpit die Antwort ab und vermerkt es im Verlauf. Kosten und Anteil sind Schätzungen aus Token × Listenpreis; während der Antwort zeigt der Button den laufenden Stand.
+
+## Kontext und Verlauf
+
+Jede Session schreibt nach `context/<datum>-<session>.md` im Projekt: Prompts, Antworten, Zusammenfassungen und Abbrüche. Erreicht der Kontext `AUTO_COMPACT_PCT` (Standard 75 %, pro Projekt in den Einstellungen), lässt das Cockpit ihn nach der Antwort zusammenfassen (`/compact`); die Zusammenfassung landet ebenfalls dort. Claude kennt den Ordner und liest bei Bedarf darin nach.
+
+## Fehlende Programme
+
+Fehlt ffmpeg, Git oder die GitHub CLI, steht unten in der Seitenleiste ein kurzer Hinweis mit „Installieren“ (Windows: winget, macOS: Homebrew, ohne Administratorrechte, wo das Paket es erlaubt). Der Fortschritt erscheint im Hinweis; danach wird `PATH` neu gelesen, ein Neustart ist meist nicht nötig. Auf Linux steht der passende Befehl da.
 
 ## Verbrauch und Prognose
 
@@ -177,7 +195,9 @@ server/
   index.js          Start, Express, WebSocket, Vorschau-Server, Hook-API, Shutdown
   runner.js         eine Claude-Code-Session pro Projekt (SDK, Freigaben, Stream, Auto-Commit)
   browsers.js       Browser-Identitäten: Prozesse, CDP, Screencast, Eingaben, Xvfb
-  cockpit-mcp.js    Cockpit-Tools für Claude (Datenbanken, Dienste, Browser-Info)
+  cockpit-mcp.js    Cockpit-Tools für Claude (Datenbanken, Diagramme, Dienste, Sessions, Browser)
+  charts.js         SVG-Diagramme als eigenständige HTML-Seiten
+  installer.js      Ein-Klick-Installation fehlender Programme (winget/Homebrew)
   git.js github.js  Versionskontrolle, GitHub CLI
   databases.js services.js
   catalog.js limits.js sessions.js actions.js auth.js security.js files.js terminals.js …

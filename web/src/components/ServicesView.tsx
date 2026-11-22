@@ -89,30 +89,34 @@ export default function ServicesView() {
             </div>
           );
         })}
+        {scope === 'all' && !list.length && <p className="small-text muted" style={{ padding: '12px 14px' }}>In keinem Projekt sind Dienste angelegt.</p>}
         {scope === 'project' && terminals && <button className={`svc-term${sel === '__term' ? ' on' : ''}`} onClick={() => setSel('__term')}><SquareTerminal size={13} /> Terminal</button>}
         {scope === 'project' && <SchedulesPanel projectId={pid} />}
         {scope === 'project' && <HookInfo projectId={pid} />}
       </div>
       <div className="svc-right">
         {sel === '__term' ? <Suspense fallback={null}><TerminalPanel key={pid} /></Suspense>
-          : current ? <Logs projectId={current.projectId ?? pid} service={current} /> : <div className="empty" />}
+          : current ? <Logs projectId={current.projectId ?? pid} service={current} foreign={(current.projectId ?? pid) !== pid} /> : <div className="empty" />}
       </div>
       {edit && <ServiceDialog projectId={pid} service={edit} others={(services ?? []).filter((x) => x.id !== edit.id)} onClose={() => setEdit(null)} />}
     </div>
   );
 }
 
-function Logs({ projectId, service }: { projectId: string; service: ServiceInfo }) {
+function Logs({ projectId, service, foreign }: { projectId: string; service: ServiceInfo; foreign: boolean }) {
   const [text, setText] = useState('');
   const ref = useRef<HTMLPreElement>(null);
   useEffect(() => {
     let buf = '';
-    conn.call<string>('svc.logs', { projectId, id: service.id }).then((t) => { buf = t; setText(t); }).catch(() => {});
+    const load = () => conn.call<string>('svc.logs', { projectId, id: service.id }).then((t) => { buf = t; setText(t); }).catch(() => {});
+    load();
     const off = conn.onMessage((m) => {
       if (m.t === 'svclog' && m.projectId === projectId && m.id === service.id) { buf = (buf + m.text).slice(-200_000); setText(buf); }
     });
-    return () => { off(); };
-  }, [projectId, service.id]);
+    // log lines are only pushed for the open project – poll services of other projects ("Alle Projekte")
+    const poll = foreign ? setInterval(load, 2000) : null;
+    return () => { off(); if (poll) clearInterval(poll); };
+  }, [projectId, service.id, foreign]);
   useEffect(() => { const el = ref.current; if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight; }, [text]);
   const toClaude = () => {
     const tail = text.split('\n').slice(-80).join('\n');
@@ -166,25 +170,6 @@ function ServiceDialog({ projectId, service, others, onClose }: { projectId: str
       <div className="modal" role="dialog" aria-label="Service">
         <h2>{service.id ? 'Service bearbeiten' : 'Neuer Service'}</h2>
         <div className="modal-row">
-          <div><label className="label" htmlFor="sv-p">Port (→ PORT)</label><input id="sv-p" className="input mono" inputMode="numeric" value={f.port} onChange={(e) => setF({ ...f, port: e.target.value.replace(/\D/g, '') })} placeholder="3000" /></div>
-          <div><label className="label" htmlFor="sv-h">Health-Check</label><input id="sv-h" className="input mono" value={f.health} onChange={(e) => setF({ ...f, health: e.target.value })} placeholder="/health" /></div>
-        </div>
-        <div className="modal-row">
-          <div>
-            <label className="label" htmlFor="sv-r">Neustart</label>
-            <select id="sv-r" className="select" value={f.restart} onChange={(e) => setF({ ...f, restart: e.target.value as 'no' | 'on-failure' | 'always' })}>
-              <option value="no">nie</option><option value="on-failure">bei Absturz</option><option value="always">immer</option>
-            </select>
-          </div>
-          <div>
-            <label className="label" htmlFor="sv-d">Startet nach</label>
-            <select id="sv-d" className="select" multiple size={Math.min(3, Math.max(1, others.length))} value={f.dependsOn} disabled={!others.length}
-              onChange={(e) => setF({ ...f, dependsOn: [...e.target.selectedOptions].map((o) => o.value) })}>
-              {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          </div>
-        </div>
-        <div className="modal-row">
           <div><label className="label" htmlFor="sv-n">Name</label><input id="sv-n" className="input" autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Dev-Server" /></div>
           <div><label className="label" htmlFor="sv-c">Unterordner</label><input id="sv-c" className="input mono" value={f.cwd} onChange={(e) => setF({ ...f, cwd: e.target.value })} placeholder="(Projektordner)" /></div>
         </div>
@@ -195,6 +180,30 @@ function ServiceDialog({ projectId, service, others, onClose }: { projectId: str
           <div><label className="label" htmlFor="sv-e">Umgebung (KEY=Wert je Zeile)</label><textarea id="sv-e" className="textarea mono" rows={2} value={f.env} onChange={(e) => setF({ ...f, env: e.target.value })} /></div>
         </div>
         <label className="check"><input type="checkbox" checked={f.autostart} onChange={(e) => setF({ ...f, autostart: e.target.checked })} /> Beim Start des Cockpits mitstarten</label>
+        <details className="svc-adv" open={!!(service.port || service.health || (service.restart && service.restart !== 'no') || service.dependsOn?.length)}>
+          <summary>Erweitert</summary>
+          <div className="modal-row">
+            <div><label className="label" htmlFor="sv-p">Port (→ PORT)</label><input id="sv-p" className="input mono" inputMode="numeric" value={f.port} onChange={(e) => setF({ ...f, port: e.target.value.replace(/\D/g, '') })} placeholder="3000" /></div>
+            <div><label className="label" htmlFor="sv-h">Health-Check</label><input id="sv-h" className="input mono" value={f.health} onChange={(e) => setF({ ...f, health: e.target.value })} placeholder="/health" /></div>
+          </div>
+          <div className="modal-row">
+            <div>
+              <label className="label" htmlFor="sv-r">Neustart</label>
+              <select id="sv-r" className="select" value={f.restart} onChange={(e) => setF({ ...f, restart: e.target.value as 'no' | 'on-failure' | 'always' })}>
+                <option value="no">nie</option><option value="on-failure">bei Absturz</option><option value="always">immer</option>
+              </select>
+            </div>
+            {others.length > 0 && (
+              <div>
+                <label className="label" htmlFor="sv-d">Startet nach</label>
+                <select id="sv-d" className="select" multiple size={Math.min(3, others.length)} value={f.dependsOn}
+                  onChange={(e) => setF({ ...f, dependsOn: [...e.target.selectedOptions].map((o) => o.value) })}>
+                  {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+        </details>
         <div className="modal-actions">
           {service.id && <button className="btn danger" style={{ marginRight: 'auto' }} onClick={async () => { if (await act(() => conn.call('svc.remove', { projectId, id: service.id })) !== undefined) onClose(); }}><Trash2 size={12} /> Löschen</button>}
           <button className="btn ghost" onClick={onClose}>Abbrechen</button>
