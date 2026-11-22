@@ -1,7 +1,7 @@
 import { CornerDownLeft, Paperclip, Square } from 'lucide-react';
 import { useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { estimate } from '../lib/forecast';
-import { fmtCountdown, fmtPct, fmtTokens, fmtUsd } from '../lib/format';
+import { MODE_LABEL, fmtCountdown, fmtPct, fmtTokens, fmtUsd, shortModel } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
@@ -124,6 +124,7 @@ export function Composer() {
         <button className="cmd" title="Neue Session – bei laufendem Prozess per /clear" disabled={readOnly} onClick={() => send('/clear')}>/clear</button>
         <button className="cmd" title="Alle Befehle und Skills" onClick={() => { setText('/'); ta.current?.focus(); }}>Befehle …</button>
         <span className="sep" />
+        <RunSettings />
         {busy && (
           <button className="cmd stop" title="Aktuellen Schritt abbrechen (Esc)" onClick={() => act(() => conn.call('interrupt', { projectId }), 'Unterbrochen')}>
             <Square size={10} fill="currentColor" /> Stopp
@@ -172,6 +173,43 @@ export function Composer() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Model, permission mode and effort – compact, right next to where you type. */
+function RunSettings() {
+  const { project, runner } = useActive();
+  const catalog = useStore((s) => s.catalog);
+  const cfg = useStore((s) => s.hello?.config);
+  if (!project || !cfg) return null;
+  const pid = project.id;
+  const model = runner?.live ? runner.model ?? project.model : project.model;
+  const mode = runner?.live ? runner.mode : project.mode;
+  const effort = runner?.live ? runner.effort : project.effort;
+  const models = (catalog?.models ?? []).filter((m) => m.value !== 'default');
+  const cur = models.find((m) => m.value === model || m.resolvedModel === model);
+  const efforts = cur?.supportsEffort ? cur.supportedEffortLevels : (catalog?.models ?? []).find((m) => m.supportsEffort)?.supportedEffortLevels ?? [];
+  const modes = cfg.permissionModes.filter((m) => m !== 'bypassPermissions' || cfg.allowBypass);
+  return (
+    <div className="runset">
+      <select className="mini-select" value={cur?.value ?? model ?? ''} title="Modell" aria-label="Modell"
+        onChange={(e) => act(() => conn.call('setModel', { projectId: pid, model: e.target.value }))}>
+        <option value="">Standard</option>
+        {models.map((m) => <option key={m.value} value={m.value}>{m.displayName}</option>)}
+        {model && !cur && <option value={model}>{shortModel(model)}</option>}
+      </select>
+      <select className="mini-select" value={mode} title="Freigabe-Modus" aria-label="Freigabe-Modus"
+        onChange={(e) => act(() => conn.call('setMode', { projectId: pid, mode: e.target.value }))}>
+        {modes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+      </select>
+      {efforts.length > 0 && (
+        <select className="mini-select" value={effort} title="Denkaufwand (Effort)" aria-label="Effort"
+          onChange={(e) => act(() => conn.call('setEffort', { projectId: pid, effort: e.target.value }))}>
+          <option value="">Effort: Standard</option>
+          {efforts.map((l) => <option key={l} value={l}>Effort: {l}</option>)}
+        </select>
+      )}
     </div>
   );
 }

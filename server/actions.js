@@ -11,7 +11,7 @@ export function createActions(ctx) {
   const { runners, projects, sessions, files, auth, terminals, hub, usagePoller, probe } = ctx;
 
   const actions = {
-    hello: () => ctx.helloPayload(),
+    hello: (_msg, client) => ctx.helloPayload(client),
 
     subscribe: (msg, client) => {
       const ids = (Array.isArray(msg.projects) ? msg.projects : []).filter(isProjectId).slice(0, 8);
@@ -120,6 +120,84 @@ export function createActions(ctx) {
     'auth.logout': async () => {
       await runners.shutdown();
       return auth.logout();
+    },
+
+    // ---- browser profiles
+    'browsers.list': () => ({ profiles: ctx.browsers.list(), status: ctx.browsers.status() }),
+    'browsers.create': (msg) => ctx.browsers.create(msg.profile ?? {}),
+    'browsers.update': (msg) => ctx.browsers.update(String(msg.id), msg.patch ?? {}),
+    'browsers.remove': async (msg) => { await ctx.browsers.remove(String(msg.id)); return null; },
+    'browsers.start': async (msg) => { await ctx.browsers.start(String(msg.id)); return null; },
+    'browsers.stop': async (msg) => { await ctx.browsers.stop(String(msg.id)); return null; },
+    'browsers.view': async (msg, client) => { await ctx.browsers.view(String(msg.id), client, msg.on !== false); return null; },
+    'browsers.input': async (msg) => { await ctx.browsers.input(String(msg.id), msg.ev ?? {}); return null; },
+    'browsers.nav': async (msg) => { await ctx.browsers.navigate(String(msg.id), msg); return null; },
+    'browsers.tab': async (msg) => { await ctx.browsers.tab(String(msg.id), msg); return null; },
+    'browsers.resize': async (msg) => { await ctx.browsers.resize(String(msg.id), msg.width, msg.height); return null; },
+    'browsers.dialog': async (msg) => { await ctx.browsers.answerDialog(String(msg.id), !!msg.accept, msg.text); return null; },
+    'browsers.install': () => { ctx.browsers.installBrowsers(); return null; },
+
+    // ---- git
+    'git.status': (msg) => ctx.git.status(pid(msg)),
+    'git.init': (msg) => ctx.git.init(pid(msg)),
+    'git.diff': (msg) => ctx.git.diff(pid(msg), msg.file ?? null),
+    'git.show': (msg) => ctx.git.show(pid(msg), msg.hash),
+    'git.commit': (msg) => ctx.git.commit(pid(msg), msg.message),
+    'git.discard': async (msg) => { await ctx.git.discard(pid(msg), String(msg.file ?? '')); return null; },
+    'git.revert': async (msg) => { await ctx.git.revert(pid(msg), msg.hash); return null; },
+    'git.push': (msg) => ctx.git.push(pid(msg)),
+    'git.pull': (msg) => ctx.git.pull(pid(msg)),
+    'git.remote': (msg) => ctx.git.setRemote(pid(msg), msg.url),
+    'git.publish': async (msg) => {
+      const id = pid(msg);
+      if (!(await ctx.git.isRepo(id))) await ctx.git.init(id);
+      await ctx.git.commit(id, 'Stand vor Veröffentlichung', { auto: true });
+      await ctx.github.publish(projects.dirOf(id), msg.name, msg.private !== false);
+      return ctx.git.status(id);
+    },
+
+    // ---- GitHub
+    // ---- access protection (password, devices, trusted addresses)
+    'security.status': (_msg, client) => ctx.security.status(client.session),
+    'security.setPassword': (msg, client) => {
+      ctx.security.setPassword({ password: msg.password, current: msg.current, sessionId: client.session, ip: client.ip });
+      hub.toAll({ t: 'security', hasPassword: true });
+      ctx.enforceSessions();
+      return ctx.security.status(client.session);
+    },
+    'security.revoke': (msg, client) => { ctx.security.revokeSession(String(msg.id ?? ''), client.session); ctx.enforceSessions(); return ctx.security.status(client.session); },
+    'security.revokeOthers': (_msg, client) => { ctx.security.revokeOthers(client.session); ctx.enforceSessions(); return ctx.security.status(client.session); },
+    'security.removeHost': (msg, client) => { ctx.security.removeHost(String(msg.host ?? '')); ctx.enforceSessions(); return ctx.security.status(client.session); },
+    'security.rotateToken': (_msg, client) => {
+      if (!client.local) throw new UserError('Nur lokal am Server möglich.');
+      ctx.security.rotateToken();
+      return { link: `${ctx.localUrl.replace('127.0.0.1', 'localhost')}/?token=${ctx.security.token}` };
+    },
+
+    'github.status': () => ctx.github.refresh(),
+    'github.login': () => { ctx.github.startDeviceLogin(); return null; },
+    'github.token': (msg) => ctx.github.tokenLogin(msg.token),
+    'github.cancel': () => { ctx.github.cancel(); return null; },
+    'github.logout': () => ctx.github.logout(),
+
+    // ---- databases
+    'db.list': (msg) => ctx.databases.list(pid(msg)),
+    'db.save': (msg) => ctx.databases.save(pid(msg), msg.conn ?? {}),
+    'db.remove': async (msg) => { await ctx.databases.remove(pid(msg), String(msg.id)); return null; },
+    'db.query': (msg) => ctx.databases.run(pid(msg), String(msg.id), msg.sql, msg.write ? 'write' : 'read'),
+    'db.schema': (msg) => ctx.databases.schema(pid(msg), String(msg.id)),
+
+    // ---- services
+    'svc.list': (msg) => ctx.services.list(pid(msg)),
+    'svc.save': (msg) => ctx.services.save(pid(msg), msg.service ?? {}),
+    'svc.remove': async (msg) => { await ctx.services.remove(pid(msg), String(msg.id)); return null; },
+    'svc.start': async (msg) => { await ctx.services.start(pid(msg), String(msg.id)); return null; },
+    'svc.stop': async (msg) => { await ctx.services.stop(pid(msg), String(msg.id)); return null; },
+    'svc.restart': async (msg) => { await ctx.services.restart(pid(msg), String(msg.id)); return null; },
+    'svc.logs': (msg) => ctx.services.logs(pid(msg), String(msg.id), 1000),
+    'project.hook': async (msg) => {
+      const p = await projects.get(pid(msg));
+      return { url: `${ctx.localUrl}/api/hook/${p.id}`, publicUrl: ctx.config.publicUrls[0] ? `${ctx.config.publicUrls[0]}/api/hook/${p.id}` : null, token: p.hookToken };
     },
 
     // ---- terminals

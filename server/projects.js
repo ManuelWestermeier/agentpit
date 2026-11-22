@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -39,7 +40,10 @@ export class Projects extends EventEmitter {
       model: this.config.defaultModel,
       mode: this.config.defaultMode,
       effort: this.config.defaultEffort,
-      browser: { enabled: this.config.browserMcp, headless: false },
+      browser: { enabled: this.config.browserMcp, headless: true },
+      browserProfile: '',
+      autoCommit: true,
+      hookToken: crypto.randomBytes(24).toString('base64url'),
       lastSessionId: null,
     };
   }
@@ -57,7 +61,13 @@ export class Projects extends EventEmitter {
 
   async #meta(id) {
     const stored = await this.store.readProject(id);
-    if (stored) return { ...this.defaults(id), ...stored, id, dir: this.dirOf(id) };
+    if (stored) {
+      if (!stored.hookToken) {
+        stored.hookToken = crypto.randomBytes(24).toString('base64url');
+        await this.store.writeProject(stored);
+      }
+      return { ...this.defaults(id), ...stored, id, dir: this.dirOf(id) };
+    }
     // Folder created by hand: adopt it
     const meta = this.defaults(id, id);
     await this.store.writeProject(meta);
@@ -93,6 +103,7 @@ export class Projects extends EventEmitter {
 
     const meta = { ...this.defaults(id, name), ...this.#sanitizePatch(input) };
     await this.store.writeProject(meta);
+    if (input.git !== false) await this.git?.init(id).catch((e) => console.warn(`[git] ${id}: ${e.message}`));
     this.emit('change');
     return { ...meta, dir };
   }
@@ -115,6 +126,12 @@ export class Projects extends EventEmitter {
     if (p.browser && typeof p.browser === 'object') {
       out.browser = { enabled: p.browser.enabled !== false, headless: p.browser.headless === true };
     }
+    if (typeof p.browserProfile === 'string') {
+      if (p.browserProfile && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(p.browserProfile)) throw new UserError('Ungültiges Browser-Profil');
+      out.browserProfile = p.browserProfile;
+    }
+    if (typeof p.autoCommit === 'boolean') out.autoCommit = p.autoCommit;
+    if (p.rotateHookToken === true) out.hookToken = crypto.randomBytes(24).toString('base64url');
     return out;
   }
 

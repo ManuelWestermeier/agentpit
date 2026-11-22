@@ -1,90 +1,84 @@
-import { Bell, Menu, PanelRightClose, PanelRightOpen, Power, Settings2 } from 'lucide-react';
+import { Menu, Settings2 } from 'lucide-react';
 import { useState } from 'react';
-import { MODE_LABEL, STATE_LABEL, fmtDuration } from '../lib/format';
+import { STATE_LABEL, fmtDuration, fmtPct, fmtUsd } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
-import { act, useStore } from '../lib/store';
-import type { PermissionMode } from '../lib/types';
-import { conn } from '../lib/ws';
+import { useStore, type Tab } from '../lib/store';
 import { ProjectSettings } from './ProjectSettings';
 
-export function Header({ showRight, onToggleRight, onToggleSide }: { showRight: boolean; onToggleRight: () => void; onToggleSide: () => void }) {
+const TABS: [Tab, string][] = [['session', 'Session'], ['browser', 'Browser'], ['files', 'Dateien'], ['git', 'Git'], ['services', 'Dienste'], ['data', 'Daten']];
+
+export function Header({ onToggleSide }: { onToggleSide: () => void }) {
   const { project, runner } = useActive();
-  const hello = useStore((s) => s.hello)!;
-  const catalog = useStore((s) => s.catalog);
   const view = useStore((s) => s.view);
+  const tab = useStore((s) => s.tab);
+  const profileView = useStore((s) => s.profileView);
+  const profile = useStore((s) => s.browsers?.profiles.find((p) => p.id === s.profileView));
   const sessions = useStore((s) => (s.activeId ? s.sessions[s.activeId] : undefined));
   const [settings, setSettings] = useState(false);
-  const running = runner?.state === 'running' || runner?.state === 'waiting';
   const now = useNow(1000, !!runner?.turn);
-  const [notif, setNotif] = useState(() => ('Notification' in window ? Notification.permission : 'denied'));
 
+  if (profileView) {
+    return (
+      <header className="header">
+        <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Menü"><Menu size={16} /></button>
+        <div className="header-title">
+          <h1>{profile?.name ?? 'Browser'}</h1>
+          <div className="header-sub">Browser-Identität · eigenes Profil mit Cookies, Logins und Speicher{profile?.proxy ? ' · Proxy' : ''}</div>
+        </div>
+        <UsagePill />
+      </header>
+    );
+  }
   if (!project) {
     return (
       <header className="header">
-        <button className="btn ghost icon" onClick={onToggleSide} aria-label="Projekte"><Menu size={16} /></button>
+        <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Menü"><Menu size={16} /></button>
         <div className="header-title"><h1>Cockpit</h1></div>
       </header>
     );
   }
 
-  const sessionTitle = sessions?.find((s) => s.sessionId === view?.sessionId)?.title ?? (view?.sessionId ? view.sessionId.slice(0, 8) : 'Neue Session');
-  const model = runner?.live ? (project.model || 'default') : project.model || 'default';
-  const modelInfo = catalog?.models.find((m) => m.value === model) ?? catalog?.models.find((m) => m.resolvedModel === runner?.model);
-  const efforts = modelInfo?.supportsEffort ? modelInfo.supportedEffortLevels : [];
-  const modes = hello.config.permissionModes.filter((m) => m !== 'bypassPermissions' || hello.config.allowBypass)
-    .filter((m) => m !== 'auto' || modelInfo?.supportsAutoMode !== false);
   const st = runner?.pending?.length ? 'waiting' : runner?.state ?? 'idle';
-
-  const pid = project.id;
+  const sessionTitle = sessions?.find((s) => s.sessionId === view?.sessionId)?.title ?? (view?.sessionId ? 'Session' : 'Neue Session');
   return (
-    <header className="header">
-      <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Projekte"><Menu size={16} /></button>
-      <div className="header-title">
-        <h1 title={project.dir}>{project.name}</h1>
-        <div className="header-sub">
-          <span className="state-pill"><span className={`tally ${runner?.live || st === 'error' ? st : ''}`} />{runner?.live ? STATE_LABEL[st] : 'kein Prozess'}</span>
-          {runner?.turn && <span className="tab-nums">{fmtDuration(now - runner.turn.startedAt)} · {runner.turn.calls} Calls</span>}
-          {runner?.compacting && <span style={{ color: 'var(--blue)' }}>komprimiert Kontext …</span>}
-          <span title={`${sessionTitle}${view?.sessionId ? ` · ${view.sessionId}` : ''}`} style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{sessionTitle}</span>
-          {runner?.version && <span className="faint">Claude Code {runner.version}</span>}
+    <header className="header has-tabs">
+      <div className="header-row">
+        <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Menü"><Menu size={16} /></button>
+        <div className="header-title">
+          <h1 title={project.dir}>{project.name}</h1>
+          <div className="header-sub">
+            <span className="state-pill"><span className={`tally ${runner?.live || st === 'error' ? st : ''}`} />{runner?.live ? STATE_LABEL[st] : 'bereit'}</span>
+            {runner?.turn && <span className="tab-nums">{fmtDuration(now - runner.turn.startedAt)} · {runner.turn.calls} Calls</span>}
+            {runner?.compacting && <span style={{ color: 'var(--blue)' }}>komprimiert …</span>}
+            <span className="ellipsis" title={view?.sessionId ?? ''}>{sessionTitle}</span>
+          </div>
         </div>
+        <UsagePill />
+        <button className="btn ghost icon" title="Projekteinstellungen" onClick={() => setSettings(true)}><Settings2 size={16} /></button>
       </div>
-      <div className="header-controls">
-        <select className="select" aria-label="Modell" value={model}
-          onChange={(e) => act(() => conn.call('setModel', { projectId: pid, model: e.target.value === 'default' ? '' : e.target.value }))}>
-          {(catalog?.models.length ? catalog.models : [{ value: 'default', displayName: 'Standard' }]).map((m) => (
-            <option key={m.value} value={m.value}>{m.displayName}</option>
-          ))}
-          {model !== 'default' && !catalog?.models.some((m) => m.value === model) && <option value={model}>{model}</option>}
-        </select>
-        <select className="select" aria-label="Berechtigungsmodus" value={runner?.live ? runner.mode : project.mode}
-          onChange={(e) => act(() => conn.call('setMode', { projectId: pid, mode: e.target.value as PermissionMode }))}>
-          {modes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
-        </select>
-        {efforts.length > 0 && (
-          <select className="select" aria-label="Effort" value={runner?.live ? runner.effort : project.effort}
-            onChange={(e) => act(() => conn.call('setEffort', { projectId: pid, effort: e.target.value }))}>
-            <option value="">Effort: Standard</option>
-            {efforts.map((e) => <option key={e} value={e}>Effort: {e}</option>)}
-          </select>
-        )}
-        {runner?.live && (
-          <button className="btn ghost icon" title={running ? 'Prozess beenden (bricht den laufenden Schritt ab)' : 'Prozess beenden (Session bleibt fortsetzbar)'}
-            onClick={() => act(() => conn.call('stop', { projectId: pid }))}>
-            <Power size={15} />
+      <nav className="tabs-main" role="tablist" aria-label="Bereiche">
+        {TABS.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => useStore.setState({ tab: k })}>
+            {label}
+            {k === 'session' && !!runner?.pending?.length && <span className="badge-dot" />}
           </button>
-        )}
-        {notif === 'default' && (
-          <button className="btn ghost icon" title="Desktop-Benachrichtigung bei Freigaben" onClick={async () => setNotif(await Notification.requestPermission())}>
-            <Bell size={15} />
-          </button>
-        )}
-        <button className="btn ghost icon" title="Projekteinstellungen" onClick={() => setSettings(true)}><Settings2 size={15} /></button>
-        <button className="btn ghost icon" title={showRight ? 'Seitenleiste ausblenden' : 'Seitenleiste einblenden'} onClick={onToggleRight}>
-          {showRight ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-        </button>
-      </div>
+        ))}
+      </nav>
       {settings && <ProjectSettings project={project} onClose={() => setSettings(false)} />}
     </header>
+  );
+}
+
+function UsagePill() {
+  const limits = useStore((s) => s.limits);
+  const { runner } = useActive();
+  const w5 = limits?.windows.five_hour;
+  const cost = runner?.stats?.costUsd;
+  const hot = w5 && w5.u >= 80;
+  return (
+    <button className={`usage-pill${hot ? ' hot' : ''}`} onClick={() => useStore.setState({ usageOpen: true })} title="Verbrauch, Limits und Prognose">
+      {w5 ? <><b className="num">{fmtPct(w5.u)}</b><span>5 h</span></> : <span>Verbrauch</span>}
+      {cost ? <><i /><b className="num">{fmtUsd(cost)}</b></> : null}
+    </button>
   );
 }

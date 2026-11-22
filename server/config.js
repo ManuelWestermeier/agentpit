@@ -20,6 +20,9 @@ function loadDotEnv(file) {
 loadDotEnv(path.join(ROOT, '.env'));
 
 const env = process.env;
+// Bundled browsers (Chromium + Playwright's ffmpeg for video recording) live next to the app.
+// Set before anything spawns, so Playwright MCP child processes find the same installation.
+if (!env.PLAYWRIGHT_BROWSERS_PATH) env.PLAYWRIGHT_BROWSERS_PATH = path.join(ROOT, 'browsers');
 const bool = (v, d) => (v == null || v === '' ? d : /^(1|true|yes|on|ja)$/i.test(v));
 const int = (v, d, min, max) => {
   const n = Number.parseInt(v, 10);
@@ -62,6 +65,10 @@ export const config = Object.freeze({
   browserChannel: env.BROWSER_CHANNEL || '',
   promptSuggestions: bool(env.PROMPT_SUGGESTIONS, false),
   devOrigins: list(env.DEV_ORIGINS),
+  // Remote access through a reverse proxy (recommended: `tailscale serve`), e.g. https://jetson.tail1234.ts.net
+  publicUrls: list(env.PUBLIC_URL).map((u) => u.replace(/\/+$/, '')),
+  previewPublicUrl: (env.PREVIEW_PUBLIC_URL || '').replace(/\/+$/, ''),
+  maxBrowsers: int(env.MAX_BROWSERS, 4, 1, 20),
   historyLimit: int(env.HISTORY_LIMIT, 4000, 200, 50_000),
   permissionModes: PERMISSION_MODES,
 });

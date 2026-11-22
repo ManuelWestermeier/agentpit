@@ -23,11 +23,17 @@ export class Hub extends EventEmitter {
   onMessage(handler) { this.handler = handler; }
 
   handleUpgrade(req, socket, head) {
-    this.wss.handleUpgrade(req, socket, head, (ws) => this.#attach(ws));
+    this.wss.handleUpgrade(req, socket, head, (ws) => this.#attach(ws, req));
   }
 
-  #attach(ws) {
-    const client = { ws, subs: new Set(), alive: true };
+  #attach(ws, req) {
+    const client = {
+      ws, subs: new Set(), alive: true,
+      host: String(req?.cockpitHost ?? req?.headers?.host ?? ''),
+      session: req?.cockpitSession?.id ?? null,
+      local: !!req?.cockpitLocal,
+      ip: req?.cockpitIp ?? '',
+    };
     this.clients.add(client);
     ws.on('pong', () => { client.alive = true; });
     ws.on('message', async (data, isBinary) => {

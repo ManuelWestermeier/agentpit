@@ -12,6 +12,8 @@ export interface Project {
   mode: PermissionMode;
   effort: string;
   browser: { enabled: boolean; headless: boolean };
+  browserProfile: string;
+  autoCommit: boolean;
   lastSessionId: string | null;
   dir: string;
 }
@@ -165,7 +167,11 @@ export interface Hello {
     maxRunners: number;
     previewBase: string;
     terminals: boolean;
+    remote: boolean;
+    hasPassword: boolean;
   };
+  browsers: BrowsersState;
+  github: GitHubSnapshot;
   env: EnvInfo;
   auth: AuthSnapshot;
   catalog: Catalog;
@@ -182,4 +188,22 @@ export interface HistoryResult {
   total: number;
   truncated: boolean;
   error?: string;
+}
+
+export interface BrowserProfile {
+  id: string; name: string; engine: 'chromium' | 'chrome' | 'msedge'; headless: boolean; temporary: boolean;
+  proxy: string; lang: string; startUrl: string; color: string; port: number | null;
+  running: boolean; starting: boolean; viewers: number; url: string | null; title: string | null;
+}
+export interface BrowsersState {
+  profiles: BrowserProfile[];
+  status: { bundled: boolean; chrome: boolean; msedge: boolean; path: string; install: { state: string; lines: string[] }; defaultHeadless: boolean; virtualDisplay: boolean };
+}
+export interface GitHubSnapshot {
+  status: { installed: boolean; loggedIn: boolean; login?: string; name?: string; email?: string; error?: string | null } | null;
+  login: { state: string; code: string | null; url: string | null; output: string[]; error: string | null };
+}
+export interface ServiceInfo {
+  id: string; name: string; command: string; cwd: string; url: string; autostart: boolean; env: Record<string, string>;
+  status: 'stopped' | 'starting' | 'running' | 'exited' | 'crashed'; pid: number | null; exitCode: number | null; startedAt: number | null; detectedUrl: string | null;
 }

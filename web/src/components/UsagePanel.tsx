@@ -37,7 +37,7 @@ function Summary() {
   return <span className="usage-summary">{parts.join(' · ')}</span>;
 }
 
-function PlanLimits() {
+export function PlanLimits() {
   const limits = useStore((s) => s.limits);
   const now = useNow(15_000);
   const [busy, setBusy] = useState(false);
@@ -94,7 +94,7 @@ function PlanLimits() {
   );
 }
 
-function SessionUsage() {
+export function SessionUsage() {
   const { project, runner } = useActive();
   const catalog = useStore((s) => s.catalog);
   const limits = useStore((s) => s.limits);

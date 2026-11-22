@@ -12,8 +12,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 $major = [int](node -p "process.versions.node.split('.')[0]")
-if ($major -lt 20) {
-  Write-Host "Node.js $major ist zu alt (mindestens 20.12, empfohlen aktuelle LTS)." -ForegroundColor Yellow
+if ($major -lt 22) {
+  Write-Host "Node.js $major ist zu alt (mindestens 22.13, empfohlen 24 LTS):  winget upgrade OpenJS.NodeJS.LTS" -ForegroundColor Yellow
   exit 1
 }
 
@@ -35,6 +35,10 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
     Refresh-Path
   }
+}
+
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+  Write-Host 'Hinweis: GitHub CLI fehlt (für „Mit GitHub anmelden“):  winget install GitHub.cli' -ForegroundColor DarkGray
 }
 
 node server/index.js

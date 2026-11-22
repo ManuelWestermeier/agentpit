@@ -54,6 +54,31 @@ function detectBrowsers() {
   };
 }
 
+const CHROMIUM_EXE = {
+  win32: [['chrome-win64', 'chrome.exe'], ['chrome-win', 'chrome.exe']],
+  linux: [['chrome-linux64', 'chrome'], ['chrome-linux', 'chrome']],
+  darwin: [
+    ['chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'],
+    ['chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'],
+    ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],
+  ],
+};
+
+/** Executable for a browser engine: 'chromium' = bundled Playwright build, else system Chrome/Edge. */
+export function findBrowserExecutable(engine) {
+  if (engine === 'chrome' || engine === 'msedge') return detectBrowsers()[engine];
+  const base = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (!base || !fs.existsSync(base)) return null;
+  const dirs = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
+  for (const d of dirs) {
+    for (const parts of CHROMIUM_EXE[process.platform] ?? []) {
+      const exe = path.join(base, d, ...parts);
+      if (fs.existsSync(exe)) return exe;
+    }
+  }
+  return null;
+}
+
 export function playwrightMcpCli(root) {
   const cli = path.join(root, 'node_modules', '@playwright', 'mcp', 'cli.js');
   return fs.existsSync(cli) ? cli : null;
@@ -74,6 +99,7 @@ export async function checkEnvironment({ config, root }) {
     run('git', ['--version']),
   ]);
   const browsers = detectBrowsers();
+  const bundled = findBrowserExecutable('chromium');
   const channel = config.browserChannel || (browsers.chrome ? 'chrome' : browsers.msedge ? 'msedge' : '');
   const bin = claudeBinary(config);
   const claudeVersion = await run(bin, ['--version'], 15000);
@@ -84,7 +110,7 @@ export async function checkEnvironment({ config, root }) {
     claude: { bin, version: claudeVersion?.split(/\s/)[0] ?? null, bundled: bin === bundledClaudeBinary() },
     ffmpeg: ffmpeg ? ffmpeg.split('\n')[0].replace(/^ffmpeg version\s+/, '').split(' ')[0] : null,
     git: git ? git.replace(/^git version\s+/, '') : null,
-    browser: { channel, chrome: !!browsers.chrome, msedge: !!browsers.msedge },
+    browser: { channel, chrome: !!browsers.chrome, msedge: !!browsers.msedge, bundled },
     playwrightMcp: !!playwrightMcpCli(root),
     pty: !!pty,
     hints: [
@@ -92,7 +118,7 @@ export async function checkEnvironment({ config, root }) {
         ? { key: 'ffmpeg', text: 'ffmpeg fehlt – für Videos nötig.', cmd: 'winget install --id Gyan.FFmpeg -e' }
         : { key: 'ffmpeg', text: 'ffmpeg fehlt – für Videos nötig.', cmd: process.platform === 'darwin' ? 'brew install ffmpeg' : 'sudo apt install ffmpeg' }),
       !git && process.platform === 'win32' && { key: 'git', text: 'Git for Windows fehlt – Claude Code nutzt dessen Bash.', cmd: 'winget install --id Git.Git -e' },
-      !channel && { key: 'browser', text: 'Kein Chrome/Edge gefunden – Browser-Steuerung braucht einen Chromium-Browser.', cmd: 'npx playwright install chromium' },
+      !channel && !bundled && { key: 'browser', text: 'Kein Browser gefunden – im Browser-Bereich „Browser installieren“ (lädt Chromium).', cmd: 'npm run install:browser' },
     ].filter(Boolean),
   };
 }

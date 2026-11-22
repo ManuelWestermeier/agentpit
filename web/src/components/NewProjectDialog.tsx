@@ -12,7 +12,9 @@ export function NewProjectDialog() {
   const [model, setModel] = useState('');
   const [mode, setMode] = useState<PermissionMode>('acceptEdits');
   const [browser, setBrowser] = useState(true);
-  const [headless, setHeadless] = useState(false);
+  const headless = true;
+  const profiles = useStore((s) => s.browsers?.profiles ?? []);
+  const [profile, setProfile] = useState('');
   const [busy, setBusy] = useState(false);
   const close = useCallback(() => useStore.setState({ newProjectOpen: false }), []);
   useEscape(close);
@@ -20,7 +22,7 @@ export function NewProjectDialog() {
 
   const create = async () => {
     setBusy(true);
-    const p = await act(() => conn.call<Project>('project.create', { project: { name, model, mode, browser: { enabled: browser, headless } } }));
+    const p = await act(() => conn.call<Project>('project.create', { project: { name, model, mode, browserProfile: browser ? profile : '', browser: { enabled: browser, headless } } }));
     setBusy(false);
     if (!p) return;
     close();
@@ -33,7 +35,7 @@ export function NewProjectDialog() {
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="modal" role="dialog" aria-label="Neues Projekt">
         <h2>Neues Projekt</h2>
-        <p>Legt <code>projects/&lt;id&gt;/</code> mit CLAUDE.md, Video- und Browser-Skill sowie <code>input/</code> und <code>output/</code> an.</p>
+        <p>Legt <code>projects/&lt;id&gt;/</code> als Git-Repository an – mit CLAUDE.md, .gitignore, Video- und Browser-Skill, <code>input/</code> und <code>output/</code>.</p>
         <label className="label" htmlFor="np-name">Name</label>
         <input id="np-name" className="input" autoFocus value={name} maxLength={80} placeholder="z. B. Promo-Video küin"
           onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) create(); }} />
@@ -52,8 +54,13 @@ export function NewProjectDialog() {
             </select>
           </div>
         </div>
-        <label className="check"><input type="checkbox" checked={browser} onChange={(e) => setBrowser(e.target.checked)} /> Browser-Steuerung (Playwright) aktivieren</label>
-        <label className="check" style={{ marginTop: 6, opacity: browser ? 1 : 0.5 }}><input type="checkbox" checked={headless} disabled={!browser} onChange={(e) => setHeadless(e.target.checked)} /> Browser unsichtbar (headless)</label>
+        <label className="check"><input type="checkbox" checked={browser} onChange={(e) => setBrowser(e.target.checked)} /> Browser für Claude</label>
+        {browser && (
+          <select className="select" style={{ marginTop: 6 }} value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Browser-Identität">
+            <option value="">Eigenes Projektprofil (unsichtbar)</option>
+            {profiles.map((p) => <option key={p.id} value={p.id}>Identität: {p.name}</option>)}
+          </select>
+        )}
         <div className="modal-actions">
           <button className="btn ghost" onClick={close}>Abbrechen</button>
           <button className="btn primary" disabled={!name.trim() || busy} onClick={create}>Projekt anlegen</button>

@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import { Timeline } from './timeline';
-import type { AuthSnapshot, Catalog, Hello, HistoryResult, Limits, Project, RunnerStatus, SessionInfo } from './types';
+import type { AuthSnapshot, BrowsersState, Catalog, GitHubSnapshot, Hello, HistoryResult, Limits, Project, RunnerStatus, ServiceInfo, SessionInfo } from './types';
 import { conn } from './ws';
 
 export type Filter = 'all' | 'chat' | 'commands';
-export type RightTab = 'files' | 'preview' | 'terminal';
+export type Tab = 'session' | 'browser' | 'files' | 'git' | 'services' | 'data';
 
 interface View {
   projectId: string;
@@ -35,7 +35,12 @@ interface State {
   progress: Record<string, number>;
   filesVersion: number;
   filter: Filter;
-  rightTab: RightTab;
+  tab: Tab;
+  profileView: string | null;
+  browsers: BrowsersState | null;
+  github: GitHubSnapshot | null;
+  services: Record<string, ServiceInfo[]>;
+  usageOpen: boolean;
   preview: { path: string; at: number } | null;
   toasts: Toast[];
   loginOpen: boolean;
@@ -72,7 +77,7 @@ export const useStore = create<State>()((set, get) => {
     switch (msg.t) {
       case 'hello': {
         const h = msg as Hello & { t: string };
-        set({ hello: h, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits });
+        set({ hello: h, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits, browsers: h.browsers, github: h.github });
         const remembered = s.activeId ?? storage.get(LS_ACTIVE);
         const pick = h.projects.find((p) => p.id === remembered)?.id ?? h.projects[0]?.id ?? null;
         get().selectProject(pick);
@@ -153,8 +158,25 @@ export const useStore = create<State>()((set, get) => {
       case 'catalog':
         set({ catalog: msg.catalog });
         return;
+      case 'browsers':
+        set({ browsers: msg.browsers });
+        if (s.profileView && !msg.browsers.profiles.some((p: { id: string }) => p.id === s.profileView)) set({ profileView: null });
+        return;
+      case 'binstall':
+        if (s.browsers) set({ browsers: { ...s.browsers, status: { ...s.browsers.status, install: msg.install } } });
+        return;
+      case 'github':
+        set({ github: msg.github });
+        if (msg.github?.login?.state === 'done' && s.github?.login?.state === 'running') get().toast('info', 'Mit GitHub verbunden.');
+        return;
+      case 'services':
+        set({ services: { ...s.services, [msg.projectId]: msg.services } });
+        return;
       case 'limits':
         set({ limits: msg.limits });
+        return;
+      case 'security':
+        if (s.hello) set({ hello: { ...s.hello, config: { ...s.hello.config, hasPassword: !!msg.hasPassword } } });
         return;
       case 'attention': {
         const p = s.projects.find((x) => x.id === msg.projectId);
@@ -187,7 +209,12 @@ export const useStore = create<State>()((set, get) => {
     progress: {},
     filesVersion: 0,
     filter: 'all',
-    rightTab: 'files',
+    tab: 'session',
+    profileView: null,
+    browsers: null,
+    github: null,
+    services: {},
+    usageOpen: false,
     preview: null,
     toasts: [],
     loginOpen: false,
@@ -209,7 +236,7 @@ export const useStore = create<State>()((set, get) => {
 
     async selectProject(id) {
       storage.set(LS_ACTIVE, id);
-      set({ activeId: id, live: { text: '', thinking: '' }, progress: {}, preview: null });
+      set({ activeId: id, profileView: null, live: { text: '', thinking: '' }, progress: {}, preview: null });
       conn.send('subscribe', { projects: id ? [id] : [] });
       if (!id) { set({ view: null }); return; }
       const project = get().projects.find((p) => p.id === id);

@@ -48,7 +48,7 @@ export function FilesPanel() {
 
   const open = (e: FileEntry) => {
     if (e.dir) setPath(e.path);
-    else useStore.setState({ preview: { path: e.path, at: Date.now() }, rightTab: 'preview' });
+    else useStore.setState({ preview: { path: e.path, at: Date.now() } });
   };
   const crumbs = path ? path.split('/') : [];
 

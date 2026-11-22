@@ -1,5 +1,5 @@
 import { ArrowDown, Loader2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fmtDuration, fmtTokens } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { useStore, type Filter } from '../lib/store';
@@ -27,7 +27,7 @@ function applyFilter(items: Item[], f: Filter) {
   return items.filter((i) => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'output' || i.kind === 'turn' || (i.kind === 'note' && i.level !== 'dim'));
 }
 
-export function TimelineView() {
+export function TimelineView({ extra }: { extra?: ReactNode } = {}) {
   const view = useStore((s) => s.view);
   const version = useStore((s) => s.view?.version ?? 0);
   const filter = useStore((s) => s.filter);
@@ -61,7 +61,7 @@ export function TimelineView() {
 
   return (
     <div className="timeline-wrap">
-      <Filters total={items.length} />
+      <Filters total={items.length} extra={extra} />
       <div className="timeline" ref={ref} onScroll={onScroll}>
         {view.loading && <div className="note dim" style={{ paddingLeft: 'calc(var(--gutter) + 12px)' }}><Loader2 size={12} className="spin" /> Lade Verlauf …</div>}
         {(filtered.length > limit || view.truncated) && (
@@ -91,7 +91,7 @@ export function TimelineView() {
   );
 }
 
-function Filters({ total }: { total: number }) {
+function Filters({ total, extra }: { total: number; extra?: ReactNode }) {
   const filter = useStore((s) => s.filter);
   const set = (f: Filter) => useStore.setState({ filter: f });
   const opts: [Filter, string][] = [['all', 'Alles'], ['chat', 'Nur Dialog'], ['commands', 'Befehle & Ausgaben']];
@@ -101,6 +101,7 @@ function Filters({ total }: { total: number }) {
         <button key={k} className={`chip${filter === k ? ' active' : ''}`} onClick={() => set(k)} role="tab" aria-selected={filter === k}>{l}</button>
       ))}
       <span className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-xs)' }}>{total} Einträge</span>
+      {extra}
     </div>
   );
 }
@@ -138,7 +139,7 @@ function EmptyState() {
   return (
     <div className="empty">
       <h2>{project?.name}</h2>
-      <p>Schreib unten eine Aufgabe. Claude arbeitet im Ordner <code>{project?.dir}</code> – Ergebnisse landen in <code>output/</code> und erscheinen rechts in der Vorschau.</p>
+      <p>Schreib unten eine Aufgabe. Claude arbeitet im Ordner <code>{project?.dir}</code> – Ergebnisse landen in <code>output/</code> (Tab „Dateien“), jede abgeschlossene Aufgabe wird als Git-Commit gesichert.</p>
       <p className="faint">Beispiel: „Öffne example.com im Browser, nimm einen 20-Sekunden-Rundgang als Video auf und schneide ihn mit ffmpeg auf 1080p.“</p>
     </div>
   );

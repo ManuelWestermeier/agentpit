@@ -35,8 +35,13 @@ class Connection {
       }
       for (const l of this.listeners) l(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.setUp(false);
+      // Signed out elsewhere, password changed or session expired → show the login page
+      fetch('/api/health', { credentials: 'same-origin', cache: 'no-store' })
+        .then((r) => { if (r.status === 401) location.reload(); })
+        .catch(() => {});
+      if (ev.code === 4401) return;
       for (const [id, w] of this.waiting) { clearTimeout(w.timer); w.reject(new Error('Verbindung getrennt')); this.waiting.delete(id); }
       setTimeout(() => this.connect(), this.backoff);
       this.backoff = Math.min(this.backoff * 2, 8000);

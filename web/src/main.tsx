@@ -10,6 +10,7 @@ import './styles/base.css';
 import './styles/layout.css';
 import './styles/timeline.css';
 import './styles/panels.css';
+import './styles/views.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';

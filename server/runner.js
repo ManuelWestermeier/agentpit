@@ -1,7 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
-import { playwrightMcpCli } from './environment.js';
+import { COCKPIT_SAFE_TOOLS, cockpitMcp } from './cockpit-mcp.js';
+import { findBrowserExecutable, playwrightMcpCli } from './environment.js';
 import { addModelUsage, diffModelUsage, emptyStats } from './session-stats.js';
 import { AsyncQueue, TailBuffer, UserError, debounce, isUuid, stripAnsi, throttle, uuid } from './util.js';
 
@@ -123,23 +124,25 @@ export class Runner extends EventEmitter {
     this.emitStatus();
   }
 
-  #buildOptions() {
+  async #buildOptions() {
     const { config, env, root } = this.ctx;
     const p = this.project;
-    const mcpServers = {};
+    const mcpServers = { cockpit: cockpitMcp(this.ctx, this.projectId) };
     const cli = playwrightMcpCli(root);
     if (config.browserMcp && p.browser?.enabled !== false && cli) {
-      const args = [
-        cli,
-        '--caps', 'vision,pdf,devtools',
-        '--output-dir', path.join(p.dir, 'output', 'browser'),
-        '--user-data-dir', this.ctx.store.p('browser', this.projectId),
-        '--viewport-size', '1280x720',
-        '--image-responses', 'allow',
-      ];
-      if (env.browser.channel) args.push('--browser', env.browser.channel);
-      if (p.browser?.headless) args.push('--headless');
-      mcpServers.playwright = { type: 'stdio', command: process.execPath, args };
+      const args = [cli, '--caps', 'vision,pdf,devtools', '--output-dir', path.join(p.dir, 'output', 'browser'), '--image-responses', 'allow'];
+      if (p.browserProfile) {
+        // Linked identity: Claude drives the same browser the user sees in the cockpit
+        const port = await this.ctx.browsers.ensureRunning(p.browserProfile);
+        args.push('--cdp-endpoint', `http://127.0.0.1:${port}`);
+      } else {
+        args.push('--user-data-dir', this.ctx.store.p('browser', this.projectId), '--viewport-size', '1280x720');
+        const bundled = findBrowserExecutable('chromium');
+        if (env.browser.channel) args.push('--browser', env.browser.channel);
+        else if (bundled) args.push('--executable-path', bundled);
+        if (p.browser?.headless !== false || process.platform === 'linux' && !process.env.DISPLAY) args.push('--headless');
+      }
+      mcpServers.playwright = { type: 'stdio', command: process.execPath, args, env: { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH } };
     }
 
     const mode = p.mode === 'bypassPermissions' && !config.allowBypass ? 'acceptEdits' : p.mode;
@@ -175,7 +178,7 @@ export class Runner extends EventEmitter {
       throw new UserError(`Schon ${config.maxRunners} Sessions aktiv (MAX_RUNNERS). Beende zuerst eine.`);
     }
     this.project = await this.ctx.projects.get(this.projectId);
-    const options = this.#buildOptions();
+    const options = await this.#buildOptions();
     let sessionId;
     if (resume && isUuid(resume)) {
       options.resume = resume;
@@ -279,7 +282,7 @@ export class Runner extends EventEmitter {
 
   // ---------------------------------------------------------------- input
 
-  async send(text) {
+  async send(text, opts = {}) {
     const prompt = String(text ?? '').trim();
     if (!prompt) return;
     if (prompt.length > 400_000) throw new UserError('Prompt zu lang (max. 400 000 Zeichen)');
@@ -297,7 +300,8 @@ export class Runner extends EventEmitter {
     this.lastActivityAt = Date.now();
     if (!busy) this.#beginTurn();
     if (!this.stats.firstPrompt && !prompt.startsWith('/')) this.stats.firstPrompt = prompt.slice(0, 200);
-    this.#log('cockpit', 'user_prompt', { text: prompt, uuid: id, queued: busy });
+    if (!prompt.startsWith('/')) this.lastPrompt = prompt;
+    this.#log('cockpit', 'user_prompt', { text: prompt, uuid: id, queued: busy, source: opts.source ?? null });
     this.saveStats();
     this.emitStatus();
   }
@@ -361,7 +365,7 @@ export class Runner extends EventEmitter {
   // ---------------------------------------------------------------- permissions
 
   #canUseTool(toolName, input, opts) {
-    if (SAFE_BROWSER_TOOLS.has(toolName)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
+    if (SAFE_BROWSER_TOOLS.has(toolName) || COCKPIT_SAFE_TOOLS.has(toolName)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
     return new Promise((resolve) => {
       const id = opts.requestId || uuid();
       const suggestions = Array.isArray(opts.suggestions) ? opts.suggestions : [];
@@ -671,6 +675,13 @@ export class Runner extends EventEmitter {
     this.ctx.usagePoller.afterTurn(this);
     this.ctx.sessions.invalidate(this.projectId);
     this.ctx.files.touched(this.projectId);
+    if (this.project.autoCommit !== false && this.lastPrompt && await this.ctx.git.isRepo(this.projectId)) {
+      const first = this.lastPrompt.split('\n')[0].slice(0, 72);
+      try {
+        const c = await this.ctx.git.commit(this.projectId, `Claude: ${first}`, { auto: true });
+        if (c) this.#log('cockpit', 'git_commit', { hash: c.short, subject: c.subject });
+      } catch (e) { this.#log('cockpit', 'error_note', { text: `Auto-Commit fehlgeschlagen: ${e.message}` }); }
+    }
   }
 
   // ---------------------------------------------------------------- persistence

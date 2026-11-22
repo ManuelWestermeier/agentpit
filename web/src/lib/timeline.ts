@@ -164,6 +164,12 @@ export class Timeline {
       case 'rewind':
         this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'info', text: `Dateien zurückgesetzt (${(ev.files ?? []).length})`, detail: (ev.files ?? []).join('\n') });
         return;
+      case 'git_commit':
+        this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: `Commit ${ev.hash} · ${ev.subject}` });
+        return;
+      case 'error_note':
+        this.push({ kind: 'note', id: this.nid('e'), v: 0, ts, level: 'warn', text: ev.text });
+        return;
       case 'fork_marker':
         this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'info', text: 'Ab hier: abgezweigte Session' });
         return;

@@ -5,7 +5,15 @@
       "Bash(ffprobe *)",
       "Bash(mkdir *)",
       "Bash(ls *)",
-      "Bash(node .claude/skills/video/render-frames.mjs *)"
+      "Bash(node .claude/skills/video/render-frames.mjs *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ],
     "deny": [
       "Read(./.env)",
