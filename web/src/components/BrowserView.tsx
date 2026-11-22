@@ -28,6 +28,14 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
   const [dialogText, setDialogText] = useState('');
   const moveQueued = useRef<null | { x: number; y: number; buttons: number }>(null);
   const touch = useRef<{ x: number; y: number; lastY: number; lastX: number; drag: boolean } | null>(null);
+  // End-to-end flow control: confirm each frame once it is decoded and on screen. The server only
+  // keeps a few unconfirmed frames in flight, so no buffer on the way (OS, tunnel) fills with old frames.
+  const pendingAck = useRef<number | null>(null);
+  const ackFrame = () => {
+    const seq = pendingAck.current;
+    pendingAck.current = null;
+    if (seq != null) conn.send('browsers.fack', { id: profileId, seq });
+  };
   const [stats, setStats] = useState<StreamStats | null>(null);
   const [showStream, setShowStream] = useState(false);
   const [streamDraft, setStreamDraft] = useState<StreamSettings | null>(null);
@@ -63,7 +71,8 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
       if (m.profileId !== profileId) return;
       if (m.t === 'bframe') {
         frameSize.current = { w: m.w, h: m.h };
-        if (img.current) img.current.src = `data:image/${m.fmt === 'png' ? 'png' : 'jpeg'};base64,${m.data}`;
+        pendingAck.current = typeof m.seq === 'number' ? m.seq : null;
+        if (img.current) img.current.src =`data:image/${m.fmt === 'png' ? 'png' : 'jpeg'};base64,${m.data}`;
         setHasFrame(true);
       } else if (m.t === 'bstats') {
         const s = m as unknown as StreamStats;
@@ -185,7 +194,7 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
       <div className="bstage" ref={stage} tabIndex={0} onKeyDown={(e) => onKey(e, 'down')} onKeyUp={(e) => onKey(e, 'up')}
         onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); send({ kind: 'text', text: t }); } }}
         onContextMenu={(e) => e.preventDefault()} aria-label="Ferngesteuerter Browser – klicken, dann tippen">
-        <img ref={img} alt="" draggable={false} style={{ visibility: hasFrame ? 'visible' : 'hidden' }}
+        <img ref={img} alt="" draggable={false} style={{ visibility: hasFrame ? 'visible' : 'hidden' }} onLoad={ackFrame} onError={ackFrame}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel} />
         {showStream && (
           <div className="bstream" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} onKeyUp={(e) => e.stopPropagation()}>

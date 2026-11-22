@@ -200,6 +200,8 @@ export interface StreamSettings { mode: 'auto' | 'manual'; quality: number; maxW
 export interface StreamStats {
   mode: 'auto' | 'manual'; level: number; levels: number; quality: number; maxWidth: number; fpsLimit: number; format: string;
   fps: number; kbps: number; skipped: number; frameKb: number;
+  /** round trip server → displayed → ack (ms) and the part of it that is queueing; null without acks */
+  rtt: number | null; queue: number | null;
 }
 export interface BrowsersState {
   profiles: BrowserProfile[];

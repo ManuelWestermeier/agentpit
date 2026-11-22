@@ -133,6 +133,7 @@ export function createActions(ctx) {
     'browsers.input': async (msg) => { await ctx.browsers.input(String(msg.id), msg.ev ?? {}); return null; },
     'browsers.nav': async (msg) => { await ctx.browsers.navigate(String(msg.id), msg); return null; },
     'browsers.tab': async (msg) => { await ctx.browsers.tab(String(msg.id), msg); return null; },
+    'browsers.fack': (msg, client) => { ctx.browsers.frameAck(String(msg.id), client, Number(msg.seq)); return null; },
     'browsers.stream': (msg) => ctx.browsers.setStream(String(msg.id), msg.stream ?? {}),
     'browsers.resize': async (msg) => { await ctx.browsers.resize(String(msg.id), msg.width, msg.height); return null; },
     'browsers.dialog': async (msg) => { await ctx.browsers.answerDialog(String(msg.id), !!msg.accept, msg.text); return null; },

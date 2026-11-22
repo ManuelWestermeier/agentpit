@@ -70,6 +70,8 @@ export function StreamStatsView({ stats }: { stats: StreamStats | null }) {
       <div><span>Auflösung</span><b>≤ {stats.maxWidth} px</b></div>
       <div><span>Qualität</span><b>{stats.format === 'png' ? 'PNG' : `JPEG ${stats.quality}`}</b></div>
       <div><span>Übersprungen</span><b className={stats.skipped ? 'warn' : ''}>{stats.skipped}</b></div>
+      <div title="Zeit vom Senden eines Bildes bis es bei dir angezeigt ist"><span>Latenz</span><b>{stats.rtt == null ? '–' : `${stats.rtt} ms`}</b></div>
+      <div title="Anteil der Latenz, der durch Stau entsteht (0 = Leitung frei)"><span>Stau</span><b className={(stats.queue ?? 0) > 150 ? 'warn' : ''}>{stats.queue == null ? '–' : `${stats.queue} ms`}</b></div>
       {stats.mode === 'auto' && (
         <div className="stream-level" title="Auto-Stufe: voll = beste Qualität">
           <span>Auto-Stufe</span>

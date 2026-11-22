@@ -56,7 +56,7 @@ for (const mode of modes) {
       await store.init();
       const ctx = {
         store, root: ROOT, config: { maxBrowsers: 2, trashDir: path.join(dir, 'trash') }, env: { browser: {} }, projects: { list: async () => [] },
-        hub: { send: (c, m) => { if (m.t === 'bframe') frames++; else if (m.t === 'bstats') stats.push(m); }, toAll: () => {} },
+        hub: { send: (c, m) => { if (m.t === 'bframe') { frames++; c.onFrame?.(m); } else if (m.t === 'bstats') stats.push(m); }, toAll: () => {} },
       };
       b = new Browsers(ctx);
       await b.init();
@@ -111,6 +111,47 @@ for (const mode of modes) {
       const low = e.level;
       viewer.ws.bufferedAmount = 0;
       await waitFor(() => e.level < low, 25_000, 'Hochregeln');
+    });
+
+    test('Tunnel-Szenario: Stau hinter dem Server wird über Bild-Bestätigungen erkannt, Latenz bleibt begrenzt', { timeout: 60_000 }, async () => {
+      // The local socket stays empty (bufferedAmount 0, like a tunnel client on the same machine),
+      // the path behind it carries only ~5 frames/s of the best quality, 40 ms base latency. Without
+      // end-to-end flow control frames would queue there and the delay would grow without bound.
+      e.level = 0;
+      await b.setStream(id, { mode: 'auto' }); // fresh screencast at best quality
+      frames = 0;
+      await waitFor(() => frames >= 3 && e.lastFrame, 10_000, 'Bilder in bester Qualität');
+      const BPS = e.lastFrame.data.length * 8 * 5, BASE = 40;
+      let linkFree = 0, maxInflight = 0;
+      const delays = [];
+      viewer.ws.bufferedAmount = 0;
+      const txTimes = []; // transmission time of each frame on the simulated link
+      viewer.onFrame = (m) => {
+        const now = Date.now();
+        const tx = (m.data.length * 8 / BPS) * 1000;
+        txTimes.push({ at: now, tx });
+        linkFree = Math.max(now, linkFree) + tx;
+        const arrive = linkFree + BASE;
+        setTimeout(() => { delays.push({ at: Date.now(), d: Date.now() - now }); b.frameAck(id, viewer, m.seq); }, arrive - now);
+      };
+      const watch = setInterval(() => { maxInflight = Math.max(maxInflight, e.vs.get(viewer)?.inflight.length ?? 0); }, 20);
+      try {
+        await waitFor(() => e.level >= 2, 30_000, 'Herunterregeln über Bestätigungen');
+        await new Promise((r) => setTimeout(r, 4000));
+        const recent = delays.filter((x) => x.at > Date.now() - 3000).map((x) => x.d);
+        assert.ok(recent.length > 0, 'keine angezeigten Bilder');
+        const worst = Math.max(...recent);
+        // bounded: base latency + at most 3 frames on the wire (+ scheduling slack) – it must not keep growing
+        const maxTx = Math.max(...txTimes.filter((x) => x.at > Date.now() - 4500).map((x) => x.tx));
+        const bound = BASE + 3 * maxTx + 400;
+        assert.ok(worst < bound, `Latenz läuft weg: ${worst} ms (Grenze ${Math.round(bound)} ms)`);
+        assert.ok(maxInflight <= 3, `zu viele unbestätigte Bilder unterwegs: ${maxInflight}`);
+        const s = stats.filter((x) => x.rtt != null).at(-1); // messages right after a level change carry no measurement
+        assert.ok(s && s.rtt >= BASE, `Latenz-Messung fehlt: ${JSON.stringify(stats.at(-1))}`);
+      } finally {
+        clearInterval(watch);
+        viewer.onFrame = (m) => setImmediate(() => b.frameAck(id, viewer, m.seq)); // fast local viewer from now on
+      }
     });
 
     test('Manuell: Bildraten-Limit wird eingehalten, Format JPEG', { timeout: 30_000 }, async () => {

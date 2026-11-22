@@ -147,6 +147,12 @@ async function waitForCdp(port, proc, ms = 20_000) {
 
 /** Lower bound of unsent bytes per viewer before frames are skipped (otherwise 1.5 × frame size). */
 const FRAME_BUFFER_MIN = 64 * 1024;
+/** End-to-end flow control: max. frames sent but not yet displayed by the viewer … */
+const MAX_INFLIGHT = 3;
+/** … and max. extra delay over the base round trip before newer frames wait (ms). */
+const LATENCY_BUDGET = 200;
+/** An unconfirmed frame older than this is considered lost (ms). */
+const ACK_TIMEOUT = 3000;
 
 const num = (v, lo, hi, d = 0) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
 
@@ -365,7 +371,7 @@ export class Browsers extends EventEmitter {
     if (noSandbox || (process.platform === 'linux' && process.getuid?.() === 0)) args.push('--no-sandbox');
     args.push(p.startUrl || 'about:blank');
 
-    const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
+    const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), vs: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
     this.running.set(id, entry);
     entry.starting = (async () => {
       const proc = spawn(exe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false, env });
@@ -550,7 +556,39 @@ export class Browsers extends EventEmitter {
     entry.trailTimer = null;
     entry.sentAt = Date.now();
     entry.net.frames++;
+    entry.lastFrame.seq = entry.seq = (entry.seq ?? 0) + 1;
     for (const c of entry.viewers) this.#sendFrame(entry, c, true);
+  }
+
+  /** Per-viewer delivery state: frames sent but not yet confirmed as displayed. */
+  #viewerState(entry, c) {
+    let vs = entry.vs.get(c);
+    if (!vs) entry.vs.set(c, vs = { inflight: [], acks: 0, legacy: false, win: { sum: 0, n: 0, min: Infinity }, mins: [] });
+    return vs;
+  }
+
+  /** Lowest round trip of the last ~20 s ≈ pure network + decode time without any queue. */
+  #baseRtt(vs) {
+    return vs.mins.length ? Math.min(...vs.mins) : Infinity;
+  }
+
+  /**
+   * The viewer confirmed it has displayed frame `seq`. This end-to-end feedback also covers buffers
+   * the server cannot see (OS socket buffer, tunnel/proxy, slow decoding on the phone).
+   */
+  frameAck(id, client, seq) {
+    const entry = this.running.get(id);
+    const vs = entry?.vs.get(client);
+    if (!vs || !Number.isFinite(seq)) return;
+    const hit = vs.inflight.find((f) => f.seq === seq);
+    if (hit) {
+      const rtt = Date.now() - hit.t;
+      vs.win.sum += rtt; vs.win.n++; vs.win.min = Math.min(vs.win.min, rtt);
+      vs.acks++;
+    }
+    vs.legacy = false; // acks arrive → flow control on (a slow first frame may have looked like an old UI)
+    vs.inflight = vs.inflight.filter((f) => f.seq > seq);
+    if (entry.stale?.has(client) && entry.lastFrame) this.#sendFrame(entry, client); // newest frame right away
   }
 
   /** Effective stream settings: manual values, or the level the auto control currently chose. */
@@ -582,14 +620,29 @@ export class Browsers extends EventEmitter {
   #tickStream(entry) {
     if (!entry.viewers.size) return;
     const n = entry.net;
+    // per viewer: average round trip of this window and how much of it is queueing (above the base RTT)
+    let rtt = null, queue = null;
+    for (const c of entry.viewers) {
+      const vs = this.#viewerState(entry, c);
+      if (vs.win.n) {
+        vs.mins.push(vs.win.min);
+        if (vs.mins.length > 13) vs.mins.shift(); // ~20 s
+        const avg = vs.win.sum / vs.win.n;
+        const q = Math.max(0, avg - this.#baseRtt(vs));
+        if (queue === null || q > queue) { queue = q; rtt = avg; } // the worst viewer decides
+      }
+      vs.win = { sum: 0, n: 0, min: Infinity };
+    }
+    n.rtt = rtt; n.queue = queue;
     const total = n.sent + n.skipped;
     if ((entry.profile.stream?.mode ?? 'auto') === 'auto' && total > 0) {
-      const skip = n.skipped / total, pressure = (n.pressure ?? 0) / total;
+      const skip = n.skipped / total;
+      const q = queue ?? 0; // no acks (old UI) → skip ratio alone
       let level = entry.level;
-      if (skip > 0.4) level += 2;
-      else if (skip > 0.1) level += 1;
-      else if (pressure < 0.25 && ++n.good >= 2) level -= 1;
-      else if (pressure >= 0.25) n.good = 0;
+      if (skip > 0.5 || q > 600) level += 2;
+      else if (skip > 0.2 || q > 250) level += 1;
+      else if (q < 100 && skip < 0.05 && ++n.good >= 2) level -= 1;
+      else if (q >= 100 || skip >= 0.05) n.good = 0;
       level = Math.max(0, Math.min(STREAM_LEVELS.length - 1, level));
       if (level !== entry.level) {
         entry.level = level;
@@ -599,7 +652,7 @@ export class Browsers extends EventEmitter {
       }
     }
     this.#sendStats(entry, 1.5);
-    Object.assign(n, { sent: 0, skipped: 0, bytes: 0, frames: 0, pressure: 0 });
+    Object.assign(n, { sent: 0, skipped: 0, bytes: 0, frames: 0 });
   }
 
   #sendStats(entry, secs) {
@@ -609,6 +662,7 @@ export class Browsers extends EventEmitter {
       quality: s.quality, maxWidth: s.maxWidth, fpsLimit: s.fps, format: s.format,
       fps: secs ? Math.round((n.frames / secs) * 10) / 10 : null, kbps: secs ? Math.round((n.bytes * 8) / secs / 1000) : null, // null = settings changed, no new measurement yet
       skipped: n.skipped, frameKb: entry.lastFrame ? Math.round(entry.lastFrame.data.length / 1024) : 0,
+      rtt: n.rtt == null ? null : Math.round(n.rtt), queue: n.queue == null ? null : Math.round(n.queue),
     };
     for (const c of entry.viewers) this.ctx.hub.send(c, msg);
   }
@@ -618,26 +672,41 @@ export class Browsers extends EventEmitter {
    * A viewer whose buffer is still full gets only the newest frame once it has drained.
    */
   #sendFrame(entry, c, fresh = false) {
+    const now = Date.now();
     const size = entry.lastFrame.data.length;
-    const limit = Math.max(FRAME_BUFFER_MIN, size * 1.5); // ≈ at most one frame in flight
+    const limit = Math.max(FRAME_BUFFER_MIN, size * 1.5); // ≈ at most one frame in the local socket
     const buffered = c.ws.bufferedAmount;
-    if (buffered < limit) {
+    const vs = this.#viewerState(entry, c);
+    const oldest = vs.inflight[0];
+    if (oldest && now - oldest.t > ACK_TIMEOUT) {
+      if (!vs.acks) vs.legacy = true; // UI without frame acks (old cached version) → socket buffer only
+      vs.inflight = vs.inflight.filter((f) => now - f.t <= ACK_TIMEOUT);
+    }
+    // In flight = sent, not yet displayed. Cap the count and the age (base RTT + latency budget),
+    // so a congested path never fills with old frames that TCP would still have to deliver.
+    const head = vs.inflight[0];
+    const budget = Math.min(ACK_TIMEOUT, (Number.isFinite(this.#baseRtt(vs)) ? this.#baseRtt(vs) : 300) + LATENCY_BUDGET);
+    const ackBlocked = !vs.legacy && (vs.inflight.length >= MAX_INFLIGHT || (head && now - head.t > budget));
+    const bufBlocked = buffered >= limit;
+    if (!ackBlocked && !bufBlocked) {
       entry.stale?.delete(c);
-      if (fresh) { entry.net.sent++; if (buffered > size * 0.5) entry.net.pressure = (entry.net.pressure ?? 0) + 1; }
+      if (fresh) entry.net.sent++;
       entry.net.bytes += size;
+      if (!vs.legacy && entry.lastFrame.seq) vs.inflight.push({ seq: entry.lastFrame.seq, t: now });
       this.ctx.hub.send(c, entry.lastFrame);
       return;
     }
     if (fresh) entry.net.skipped++;
     (entry.stale ??= new Set()).add(c);
     if (entry.flushTimer) return;
+    // the ack sends the newest frame immediately; the timer covers socket backpressure and lost acks
     entry.flushTimer = setTimeout(() => {
       entry.flushTimer = null;
       for (const v of [...(entry.stale ?? [])]) {
         if (!entry.viewers.has(v) || v.ws.readyState !== 1) entry.stale.delete(v);
         else if (entry.lastFrame) this.#sendFrame(entry, v);
       }
-    }, 30);
+    }, bufBlocked ? 30 : 100);
   }
 
   async view(id, client, on) {
@@ -645,6 +714,8 @@ export class Browsers extends EventEmitter {
       const entry = this.running.get(id);
       if (!entry) return;
       entry.viewers.delete(client);
+      entry.vs.delete(client);
+      entry.stale?.delete(client);
       if (!entry.viewers.size) await this.#restartScreencast(entry);
       this.emitList();
       return;
