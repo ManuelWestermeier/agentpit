@@ -1,8 +1,11 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { COCKPIT_SAFE_TOOLS, cockpitMcp } from './cockpit-mcp.js';
-import { findBrowserExecutable, playwrightMcpCli } from './environment.js';
+import { playwrightMcpCli } from './environment.js';
+import { SHARED_DIR_NAME } from './projects.js';
 import { addModelUsage, diffModelUsage, emptyStats } from './session-stats.js';
 import { AsyncQueue, TailBuffer, UserError, debounce, isUuid, stripAnsi, throttle, uuid } from './util.js';
 
@@ -17,11 +20,52 @@ const SAFE_BROWSER_TOOLS = new Set([
 // Approved without asking (only reached when mode/rules would ask). Always asks:
 // browser_run_code_unsafe (RCE-equivalent), browser_file_upload / browser_drop (can send local files to websites)
 
-const COCKPIT_APPEND = `# Umgebung: Agent Cockpit
+const cockpitAppend = ({ projectId, sharedDir, parentId }) => `# Umgebung: Agent Cockpit
 - Du läufst headless im "Agent Cockpit", einer lokalen Weboberfläche. Der Nutzer sieht Tool-Aufrufe, Befehle und Ausgaben live und erteilt Freigaben dort.
 - Kein interaktives Terminal: Befehle dürfen nicht auf Eingaben warten (-y/--yes, kein Pager, kein Editor).
 - Ergebnisse (Video, Bild, Audio, PDF, HTML) nach ./output/ schreiben – das Cockpit zeigt sie dort als Vorschau. Uploads des Nutzers liegen in ./input/.
-- Lange Jobs (Renderings, Dev-Server) im Hintergrund starten, damit der Nutzer weiter steuern kann.`;
+- Lange Jobs (Renderings, Dev-Server) im Hintergrund starten, damit der Nutzer weiter steuern kann.
+- Dieses Projekt/diese Session: "${projectId}"${parentId ? ` – gestartet von der Session "${parentId}" (Ergebnis dort per session_send melden, wenn die Aufgabe es verlangt)` : ''}.
+
+## Gemeinsamer Ordner ../${SHARED_DIR_NAME}/
+Absolut: ${sharedDir}
+Alle Claude-Sessions im Cockpit lesen und schreiben dort – für Wissen, Daten und Übergaben zwischen Sessions (z. B. Recherche-Ergebnisse, Listen, Status einer Pipeline, globale Notizen über den Nutzer).
+- Vor einer Aufgabe kurz ${SHARED_DIR_NAME}/README.md und passende Unterordner ansehen, ob es schon etwas gibt.
+- Eigene Dateien sprechend benennen, Übergaben mit Projektname, z. B. ${SHARED_DIR_NAME}/pipelines/<name>/status.json.
+- Andere Sessions können gleichzeitig schreiben: lieber neue Dateien anlegen oder anhängen als fremde überschreiben.
+- Keine Passwörter, Tokens oder Zugangsdaten dort ablegen.
+
+## Browser-Identitäten
+Playwright (mcp__playwright__*) steuert eine Browser-Identität des Cockpits: ein eigenes Profil mit eigenen Logins, das der Nutzer live sieht.
+- browser_info zeigt die aktive und alle verfügbaren Identitäten (mit Login-Hinweisen), browser_use wechselt sofort – auch mitten in der Aufgabe; der nächste Playwright-Aufruf läuft dann in der anderen Identität.
+- Logins (Passwörter, 2FA) erledigt der Nutzer selbst im Cockpit; niemals Passwörter eintippen. Ist eine Seite nicht eingeloggt, sag dem Nutzer, in welcher Identität er sich anmelden soll.
+
+## Sub-Sessions und Zeitpläne (mcp__cockpit__*)
+- session_create startet eine weitere Claude-Session (eigenes Projekt, optional eigene Browser-Identität) mit einer Aufgabe; session_send, session_status, session_wait, session_list, session_stop steuern sie. So lassen sich Arbeiten parallelisieren, z. B. eine Session pro Account/Identität.
+- schedule_create sendet Prompts zeitgesteuert (einmalig, alle n Minuten oder Cron) an eine Session; schedule_list / schedule_delete verwalten sie.
+- Übergaben zwischen Sessions über ${SHARED_DIR_NAME}/ (Dateien) statt langer Prompts.`;
+
+const SHARED_README = `# Gemeinsamer Ordner aller Claude-Sessions
+
+Jede Session im Agent Cockpit kann hier lesen und schreiben (aus einem Projekt: \`../${SHARED_DIR_NAME}/\`).
+Gedacht für Wissen, Daten und Übergaben zwischen Sessions und Projekten.
+
+Vorschlag für die Ordnung:
+- \`notes/\` – dauerhafte Notizen (über den Nutzer, Vorlieben, Konventionen)
+- \`data/\` – gemeinsame Datensätze, Listen
+- \`pipelines/<name>/\` – Status und Zwischenergebnisse mehrstufiger Abläufe (Recherche → Schnitt → Veröffentlichung)
+
+Keine Passwörter, Tokens oder Zugangsdaten hier ablegen.
+`;
+
+/** ../shared-claude/ next to the projects, with a README on first use. */
+async function ensureSharedDir(projectsDir) {
+  const dir = path.join(projectsDir, SHARED_DIR_NAME);
+  await fsp.mkdir(dir, { recursive: true });
+  const readme = path.join(dir, 'README.md');
+  if (!fs.existsSync(readme)) await fsp.writeFile(readme, SHARED_README).catch(() => {});
+  return dir;
+}
 
 // Messages that are shown live but not written to the event log
 const SYSTEM_SKIP_LOG = new Set([
@@ -125,36 +169,32 @@ export class Runner extends EventEmitter {
   }
 
   async #buildOptions() {
-    const { config, env, root } = this.ctx;
+    const { config, root } = this.ctx;
     const p = this.project;
     const mcpServers = { cockpit: cockpitMcp(this.ctx, this.projectId) };
     const cli = playwrightMcpCli(root);
     if (config.browserMcp && p.browser?.enabled !== false && cli) {
-      const args = [cli, '--caps', 'vision,pdf,devtools', '--output-dir', path.join(p.dir, 'output', 'browser'), '--image-responses', 'allow'];
-      if (p.browserProfile) {
-        // Linked identity: Claude drives the same browser the user sees in the cockpit
-        const port = await this.ctx.browsers.ensureRunning(p.browserProfile);
-        args.push('--cdp-endpoint', `http://127.0.0.1:${port}`);
-      } else {
-        args.push('--user-data-dir', this.ctx.store.p('browser', this.projectId), '--viewport-size', '1280x720');
-        const bundled = findBrowserExecutable('chromium');
-        if (env.browser.channel) args.push('--browser', env.browser.channel);
-        else if (bundled) args.push('--executable-path', bundled);
-        if (p.browser?.headless !== false || process.platform === 'linux' && !process.env.DISPLAY) args.push('--headless');
-      }
+      // Playwright always talks to the cockpit's CDP relay: it routes to the identity that is active
+      // right now (linked one, else this project's isolated browser), starts it on demand and lets
+      // the session switch identities mid-turn without restarting the MCP server.
+      this.relayToken ??= this.ctx.relay.add(() => this.#resolveBrowser());
+      const args = [cli, '--caps', 'vision,pdf,devtools', '--output-dir', path.join(p.dir, 'output', 'browser'), '--image-responses', 'allow',
+        '--cdp-endpoint', this.ctx.relay.endpoint(this.relayToken)];
       mcpServers.playwright = { type: 'stdio', command: process.execPath, args, env: { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH } };
     }
+    const sharedDir = await ensureSharedDir(config.projectsDir);
 
     const mode = p.mode === 'bypassPermissions' && !config.allowBypass ? 'acceptEdits' : p.mode;
     return {
       cwd: p.dir,
+      additionalDirectories: [sharedDir],
       model: p.model || undefined,
       permissionMode: mode || 'default',
       allowDangerouslySkipPermissions: config.allowBypass || undefined,
       effort: p.effort || undefined,
       includePartialMessages: true,
       settingSources: ['user', 'project', 'local'],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: COCKPIT_APPEND },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: cockpitAppend({ projectId: this.projectId, sharedDir, parentId: p.parentId }) },
       mcpServers,
       mcpServersDelivery: 'initialize',
       canUseTool: (toolName, input, opts) => this.#canUseTool(toolName, input, opts),
@@ -169,6 +209,42 @@ export class Runner extends EventEmitter {
       },
       stderr: (d) => this.stderr.push(stripAnsi(d)),
     };
+  }
+
+  // ---------------------------------------------------------------- browser identity
+
+  /** Identity Claude's Playwright uses now: the linked one, else the project's isolated browser. */
+  async activeBrowserId() {
+    const p = await this.ctx.projects.get(this.projectId);
+    if (p.browserProfile && this.ctx.browsers.profiles.has(p.browserProfile)) return p.browserProfile;
+    return this.ctx.browsers.ensureIsolated(this.projectId, { headless: p.browser?.headless !== false });
+  }
+
+  /** Called by the CDP relay on every (re)connect of Playwright: start that browser if needed. */
+  async #resolveBrowser() {
+    const id = await this.activeBrowserId();
+    this.browserInUse = id;
+    return this.ctx.browsers.ensureRunning(id);
+  }
+
+  /** The project's identity changed: the next Playwright call reconnects to the new browser. */
+  async browserChanged() {
+    this.emitStatus();
+    if (this.relayToken) await this.ctx.relay.retarget(this.relayToken);
+  }
+
+  /** Resolves when the current turn is over (or right away when idle); returns the last result. */
+  waitIdle(timeoutMs) {
+    const busy = () => this.state === 'running' || this.state === 'starting' || this.compacting;
+    if (this.state === 'waiting') return Promise.resolve({ done: false, waitingForApproval: true, result: this.lastResult });
+    if (!busy()) return Promise.resolve({ done: true, result: this.lastResult });
+    return new Promise((resolve) => {
+      const finish = (done, extra = {}) => { clearTimeout(timer); this.off('state', onState); resolve({ done, ...extra, result: this.lastResult }); };
+      // a pending approval needs the user – report it instead of blocking the caller for the whole timeout
+      const onState = () => { if (this.state === 'waiting') finish(false, { waitingForApproval: true }); else if (!busy()) finish(true); };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      this.on('state', onState);
+    });
   }
 
   async ensureStarted({ resume = this.sessionId, fork = false } = {}) {
@@ -257,6 +333,11 @@ export class Runner extends EventEmitter {
       this.setState('idle');
     }
     this.ctx.sessions.invalidate(this.projectId);
+    // the isolated browser only serves this session – close it when nobody watches it
+    const iso = this.browserInUse;
+    if (iso && this.ctx.browsers.profiles.get(iso)?.isolatedFor === this.projectId && !this.ctx.browsers.running.get(iso)?.viewers.size) {
+      this.ctx.browsers.stop(iso).catch(() => {});
+    }
     this.emit('exit');
   }
 
@@ -646,6 +727,8 @@ export class Runner extends EventEmitter {
     });
     if (s.turnLog.length > 200) s.turnLog.splice(0, s.turnLog.length - 200);
     msg._cockpit = { costDelta: delta, calls: turn.calls };
+    // final answer of the turn – read by parent sessions (session_status / session_wait)
+    this.lastResult = { text: String(msg.result ?? '').slice(0, 20_000), isError: !!msg.is_error, at: Date.now(), costUsd: delta };
     this.ctx.limits.addCost(delta);
     this.turn = null;
     this.stream.out = 0;

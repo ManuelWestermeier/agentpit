@@ -8,6 +8,8 @@ import { slugify, UserError } from './util.js';
 
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const TEMPLATE_VARS = ['CLAUDE.md'];
+/** Folder next to the projects that every session can read and write (../shared-claude/ from a project). */
+export const SHARED_DIR_NAME = 'shared-claude';
 
 /** A project is a folder ./projects/<id>/ plus settings in data/projects/<id>.json. */
 export class Projects extends EventEmitter {
@@ -53,7 +55,7 @@ export class Projects extends EventEmitter {
     try { entries = await fsp.readdir(this.config.projectsDir, { withFileTypes: true }); } catch { return []; }
     const out = [];
     for (const e of entries) {
-      if (!e.isDirectory() || !isProjectId(e.name)) continue;
+      if (!e.isDirectory() || !isProjectId(e.name) || e.name === SHARED_DIR_NAME) continue;
       out.push(await this.#meta(e.name));
     }
     return out.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -75,6 +77,7 @@ export class Projects extends EventEmitter {
   }
 
   async get(id) {
+    if (id === SHARED_DIR_NAME) throw new UserError('Der gemeinsame Ordner ist kein Projekt');
     const dir = this.dirOf(id);
     if (!fs.existsSync(dir)) throw new UserError(`Projekt ${id} existiert nicht`);
     return this.#meta(id);
@@ -85,7 +88,7 @@ export class Projects extends EventEmitter {
     if (!name) throw new UserError('Name fehlt');
     const base = slugify(name);
     let id = base;
-    for (let i = 2; fs.existsSync(path.join(this.config.projectsDir, id)); i++) id = `${base}-${i}`;
+    for (let i = 2; id === SHARED_DIR_NAME || fs.existsSync(path.join(this.config.projectsDir, id)); i++) id = `${base}-${i}`;
     const dir = this.dirOf(id);
 
     await fsp.mkdir(dir, { recursive: true });
@@ -131,6 +134,8 @@ export class Projects extends EventEmitter {
       out.browserProfile = p.browserProfile;
     }
     if (typeof p.autoCommit === 'boolean') out.autoCommit = p.autoCommit;
+    // sub-session: started by another project's Claude (shown as its child)
+    if (typeof p.parentId === 'string' && (p.parentId === '' || isProjectId(p.parentId))) out.parentId = p.parentId;
     if (p.rotateHookToken === true) out.hookToken = crypto.randomBytes(24).toString('base64url');
     return out;
   }

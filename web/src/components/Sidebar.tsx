@@ -56,9 +56,10 @@ function ProjectRow({ project, runner, active, onClick }: { project: Project; ru
   const meta = runner?.pending?.length ? `${runner.pending.length} Freigabe${runner.pending.length > 1 ? 'n' : ''} offen`
     : runner?.live ? STATE_LABEL[runner.state] : fmtAgo(project.updatedAt);
   return (
-    <button className={`proj${active ? ' active' : ''}`} onClick={onClick} title={project.dir}>
+    <button className={`proj${active ? ' active' : ''}${project.parentId ? ' proj--sub' : ''}`} onClick={onClick}
+      title={project.parentId ? `${project.dir}\nSub-Session, gestartet von „${project.parentId}“` : project.dir}>
       <span className={`tally ${runner?.live || st === 'error' ? st : ''}`} aria-label={STATE_LABEL[st]} />
-      <span className="proj-name">{project.name}</span>
+      <span className="proj-name">{project.parentId && <span className="proj-sub" aria-label="Sub-Session">↳ </span>}{project.name}</span>
       <span className={`proj-meta${st === 'waiting' ? ' waiting' : ''}`}>{meta}</span>
     </button>
   );

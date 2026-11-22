@@ -6,7 +6,9 @@ import path from 'node:path';
 import { createActions } from './actions.js';
 import { Auth } from './auth.js';
 import { Browsers } from './browsers.js';
+import { CdpRelay } from './cdp-relay.js';
 import { Databases } from './databases.js';
+import { Schedules } from './schedules.js';
 import { Git } from './git.js';
 import { GitHub } from './github.js';
 import { Services } from './services.js';
@@ -64,6 +66,8 @@ async function main() {
   ctx.projects.git = ctx.git;
   ctx.github = new GitHub();
   ctx.browsers = new Browsers(ctx);
+  ctx.relay = new CdpRelay();
+  ctx.schedules = new Schedules(ctx);
   ctx.databases = new Databases(ctx);
   ctx.services = new Services(ctx);
   ctx.localUrl = `http://127.0.0.1:${port}`;
@@ -84,6 +88,8 @@ async function main() {
   ]);
   ctx.env = env;
   await ctx.browsers.init();
+  await ctx.relay.start();
+  await ctx.schedules.init();
   const security = createSecurity({ config: cfg, port });
   ctx.security = security;
   const localPreview = `http://127.0.0.1:${previewPort}/p/${security.previewToken}`;
@@ -117,11 +123,13 @@ async function main() {
     limits: ctx.limits.snapshot(),
     projects: await ctx.projects.list(),
     runners: ctx.runners.snapshots(),
+    schedules: ctx.schedules.list(),
   });
 
   // ---- broadcasts
   const { hub } = ctx;
   ctx.projects.on('change', throttle(async () => hub.toAll({ t: 'projects', projects: await ctx.projects.list() }), 300));
+  ctx.schedules.on('change', throttle(() => hub.toAll({ t: 'schedules', schedules: ctx.schedules.list() }), 300));
   ctx.auth.on('change', () => hub.toAll({ t: 'auth', auth: ctx.auth.snapshot() }));
   ctx.catalog.on('change', () => hub.toAll({ t: 'catalog', catalog: ctx.catalog.snapshot() }));
   ctx.limits.on('change', throttle(() => hub.toAll({ t: 'limits', limits: ctx.limits.snapshot() }), 500));
@@ -289,6 +297,7 @@ async function main() {
     const force = setTimeout(() => process.exit(1), 8000);
     force.unref();
     ctx.usagePoller.stop();
+    ctx.schedules.stop();
     ctx.auth.cancelLogin('Server beendet');
     ctx.github.cancel();
     await ctx.services.stopAll().catch(() => {});
@@ -296,6 +305,7 @@ async function main() {
     ctx.terminals.closeAll();
     ctx.files.closeAll();
     await ctx.runners.shutdown().catch(() => {});
+    await ctx.relay.stop().catch(() => {});
     hub.close();
     security.flush();
     await store.flush();

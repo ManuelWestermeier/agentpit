@@ -5,6 +5,7 @@ import { useActive, useEscape } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import type { ServiceInfo } from '../lib/types';
 import { conn } from '../lib/ws';
+import { SchedulesPanel } from './SchedulesPanel';
 
 const TerminalPanel = lazy(() => import('./TerminalPanel'));
 const LAMP: Record<string, string> = { running: 'ready', starting: 'running', crashed: 'error', exited: '', stopped: '' };
@@ -63,6 +64,7 @@ export default function ServicesView() {
         ))}
         {!list.length && <div className="faint small-text" style={{ padding: '8px 14px' }}>Noch keine Dienste. Lege z. B. „Dev-Server · npm run dev“ an – oder bitte Claude, einen einzurichten.</div>}
         {terminals && <button className={`svc-term${sel === '__term' ? ' on' : ''}`} onClick={() => setSel('__term')}><SquareTerminal size={13} /> Terminal</button>}
+        <SchedulesPanel projectId={pid} />
         <HookInfo projectId={pid} />
       </div>
       <div className="svc-right">

@@ -23,15 +23,22 @@ export function createActions(ctx) {
     'project.create': async (msg) => projects.create(msg.project ?? {}),
     'project.update': async (msg) => {
       const id = pid(msg);
+      const before = await projects.get(id);
       const updated = await projects.update(id, msg.patch ?? {});
       const r = runners.peek(id);
-      if (r) r.project = updated;
+      if (r) {
+        r.project = updated;
+        // identity changed while a session runs → Claude's browser follows right away
+        if (before.browserProfile !== updated.browserProfile) await r.browserChanged();
+      }
       return updated;
     },
     'project.delete': async (msg) => {
       const id = pid(msg);
       for (const t of terminals.list(id)) terminals.close(t.id);
       await runners.drop(id);
+      await ctx.schedules.dropProject(id).catch(() => {});
+      await ctx.browsers.dropIsolated(id).catch(() => {});
       files.unwatch(id);
       return projects.remove(id);
     },
@@ -133,6 +140,11 @@ export function createActions(ctx) {
     'browsers.input': async (msg) => { await ctx.browsers.input(String(msg.id), msg.ev ?? {}); return null; },
     'browsers.nav': async (msg) => { await ctx.browsers.navigate(String(msg.id), msg); return null; },
     'browsers.tab': async (msg) => { await ctx.browsers.tab(String(msg.id), msg); return null; },
+    'schedules.list': (msg) => ctx.schedules.list(msg.projectId ? pid(msg) : undefined),
+    'schedules.create': (msg) => ctx.schedules.create(pid(msg), msg.schedule ?? {}, 'Nutzer'),
+    'schedules.update': (msg) => ctx.schedules.update(String(msg.id), msg.patch ?? {}),
+    'schedules.remove': async (msg) => { await ctx.schedules.remove(String(msg.id)); return null; },
+    'schedules.run': async (msg) => { await ctx.schedules.runNow(String(msg.id)); return null; },
     'browsers.fack': (msg, client) => { ctx.browsers.frameAck(String(msg.id), client, Number(msg.seq)); return null; },
     'browsers.stream': (msg) => ctx.browsers.setStream(String(msg.id), msg.stream ?? {}),
     'browsers.resize': async (msg) => { await ctx.browsers.resize(String(msg.id), msg.width, msg.height); return null; },

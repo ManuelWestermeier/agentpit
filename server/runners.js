@@ -39,6 +39,7 @@ export class Runners {
     const r = this.map.get(projectId);
     if (!r) return;
     await r.stop('removed');
+    if (r.relayToken) this.ctx.relay?.remove(r.relayToken);
     this.map.delete(projectId);
   }
 

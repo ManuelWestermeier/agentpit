@@ -85,6 +85,68 @@ function browserMajor(exe) {
   try { return /(\d+)\.\d+\.\d+/.exec(execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 8000 }))?.[1] ?? null; } catch { return null; }
 }
 
+/** Marker cookie on a domain that can never resolve – invisible to every website. */
+const MARKER_COOKIE = 'cockpit-identity';
+const MARKER_DOMAIN = 'cockpit-identity.invalid';
+
+/** One CDP command against the browser endpoint on `port` (no Playwright attach). */
+async function cdpOnce(port, method, params = {}, ms = 3000) {
+  const v = await withTimeout(fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json()), ms, 'CDP');
+  const ws = new WebSocket(v.webSocketDebuggerUrl);
+  try {
+    await withTimeout(new Promise((resolve, reject) => { ws.addEventListener('open', resolve); ws.addEventListener('error', reject); }), ms, 'CDP');
+    ws.send(JSON.stringify({ id: 1, method, params }));
+    const msg = await withTimeout(new Promise((resolve) => ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.id === 1) resolve(m); })), ms, 'CDP');
+    if (msg.error) throw new Error(msg.error.message);
+    return msg.result;
+  } finally {
+    ws.close();
+  }
+}
+
+/** Identity id stored in the profile of the browser on `port`, or null if it has none. */
+async function readMarker(port) {
+  const { cookies = [] } = await cdpOnce(port, 'Storage.getCookies');
+  return cookies.find((c) => c.name === MARKER_COOKIE && c.domain.replace(/^\./, '') === MARKER_DOMAIN)?.value ?? null;
+}
+
+/** Is a Chromium profile folder in use by a running browser? */
+function profileLocked(userDir) {
+  if (process.platform === 'win32') {
+    // Chromium keeps "lockfile" open exclusively while it runs
+    const f = path.join(userDir, 'lockfile');
+    if (!fs.existsSync(f)) return false;
+    try { fs.closeSync(fs.openSync(f, 'r+')); return false; } catch (e) { return e.code === 'EBUSY' || e.code === 'EPERM'; }
+  }
+  try {
+    const pid = Number(fs.readlinkSync(path.join(userDir, 'SingletonLock')).split('-').pop()); // "<host>-<pid>"
+    if (!pid) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+/** Last lines of a browser's log file – the reason a start failed. */
+function logTail(file, lines = 4) {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    return stripAnsi(text).trim().split(/\r?\n/).slice(-lines).join('\n').slice(-1500);
+  } catch {
+    return '';
+  }
+}
+
+async function waitUnlocked(userDir, ms) {
+  const end = Date.now() + ms;
+  while (profileLocked(userDir)) {
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return true;
+}
+
 /** navigator.platform of a headed browser on this machine. */
 function navigatorPlatform() {
   if (process.platform === 'win32') return 'Win32';
@@ -174,18 +236,53 @@ export class Browsers extends EventEmitter {
     this.emitList = throttle(() => this.ctx.hub.toAll({ t: 'browsers', browsers: { profiles: this.list(), status: this.status() } }), 250);
   }
 
-  dir(id) { return this.ctx.store.p('browsers', id); }
+  dir(id) {
+    const p = this.profiles.get(id);
+    // isolated per-project browser keeps the folder Playwright used before (logins stay)
+    return p?.isolatedFor ? this.ctx.store.p('browser', p.isolatedFor) : this.ctx.store.p('browsers', id);
+  }
+
+  /** Hidden identity for sessions without a linked one: own profile per project, not listed in the UI. */
+  async ensureIsolated(projectId, { headless = true } = {}) {
+    const id = `iso-${projectId}`.slice(0, 63).replace(/-+$/, '');
+    const p = this.profiles.get(id);
+    if (p) {
+      if (p.headless !== headless) { p.headless = headless; await this.#save(); }
+      return id;
+    }
+    const used = new Set([...this.profiles.values()].map((x) => x.port));
+    let port = BASE_PORT;
+    while (used.has(port)) port++;
+    this.profiles.set(id, withDefaults({ id, name: `Isoliert (${projectId})`, engine: this.defaultEngine(), headless, hidden: true, isolatedFor: projectId, port, createdAt: Date.now() }));
+    await this.#save();
+    return id;
+  }
+
+  /** Project deleted: its isolated browser goes too. */
+  async dropIsolated(projectId) {
+    for (const p of [...this.profiles.values()]) if (p.isolatedFor === projectId) await this.remove(p.id).catch(() => {});
+  }
 
   async init() {
     const saved = await this.ctx.store.readJson(this.file, []);
     for (const p of Array.isArray(saved) ? saved : []) if (ID_RE.test(p.id)) this.profiles.set(p.id, withDefaults(p));
-    if (!this.profiles.size) await this.create({ name: 'Haupt-Identität' });
+    // Repair duplicate ports (older versions could hand one identity's port to another)
+    const seen = new Set();
+    let fixed = false;
+    for (const p of this.profiles.values()) {
+      if (p.port && seen.has(p.port)) { p.port = null; fixed = true; } else if (p.port) seen.add(p.port);
+    }
+    for (const p of this.profiles.values()) {
+      if (!p.port) { let port = BASE_PORT; while (seen.has(port)) port++; p.port = port; seen.add(port); fixed = true; }
+    }
+    if (fixed) await this.#save();
+    if (![...this.profiles.values()].some((p) => !p.hidden)) await this.create({ name: 'Haupt-Identität' });
   }
 
   #save() { return this.ctx.store.writeJson(this.file, [...this.profiles.values()]); }
 
-  list() {
-    return [...this.profiles.values()].map((p) => {
+  list({ hidden = false } = {}) {
+    return [...this.profiles.values()].filter((p) => hidden || !p.hidden).map((p) => {
       const r = this.running.get(p.id);
       return { ...p, running: !!r, starting: !!r?.starting, port: r?.port ?? p.port ?? null, viewers: r?.viewers.size ?? 0, url: r?.state?.url ?? null, title: r?.state?.title ?? null };
     });
@@ -331,20 +428,32 @@ export class Browsers extends EventEmitter {
         ? 'Mitgelieferter Chromium ist nicht installiert – „Browser installieren“ im Browser-Bereich.'
         : `${p.engine === 'chrome' ? 'Google Chrome' : 'Microsoft Edge'} nicht gefunden – im Profil eine andere Engine wählen.`);
     }
-    let port = p.port ?? BASE_PORT;
-    if (!(await portFree(port))) {
-      for (port = BASE_PORT; port < BASE_PORT + 200 && !(await portFree(port)); port++);
-      p.port = port;
-      await this.#save();
-    }
     const userDir = this.dir(id);
     await fsp.mkdir(userDir, { recursive: true });
+    // Each identity keeps its own port – never one reserved by another identity. A Claude session
+    // stays connected to that port, so a taken-over port would hand it a different identity.
+    let port = p.port ?? await this.#freePort(id);
+    let adopt = false;
+    if (!(await portFree(port))) {
+      // Still running from before a cockpit restart/crash (Windows keeps child processes alive)?
+      adopt = await this.#isOwnBrowser(id, port, userDir);
+      if (!adopt) port = await this.#freePort(id);
+    }
+    // A browser still holding the profile (just closed and shutting down, or opened by hand) would make
+    // the new process hand over to it and exit at once – wait briefly, then give a clear message.
+    if (!adopt && profileLocked(userDir) && !(await waitUnlocked(userDir, 6000))) {
+      throw new UserError('Das Profil wird noch von einem anderen Browserfenster verwendet – dieses Fenster schließen und erneut starten.');
+    }
+    if (p.port !== port) { p.port = port; await this.#save(); }
     const args = [
       `--user-data-dir=${userDir}`,
       `--remote-debugging-port=${port}`,
       '--remote-debugging-address=127.0.0.1',
       '--no-first-run',
       '--no-default-browser-check',
+      // identities stay separate: no browser sync (Edge otherwise signs fresh profiles into the
+      // Windows Microsoft account and syncs passwords/history/tabs between all of them)
+      '--disable-sync',
       `--disable-features=Translate,MediaRouter${process.platform === 'win32' ? ',CalculateNativeWinOcclusion' : ''}`,
       '--window-size=1366,860',
       // keep rendering (and the screencast) going when the window is covered or in the background
@@ -374,17 +483,34 @@ export class Browsers extends EventEmitter {
     const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), vs: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
     this.running.set(id, entry);
     entry.starting = (async () => {
-      const proc = spawn(exe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false, env });
-      entry.proc = proc;
-      proc.stderr.on('data', (d) => {
-        entry.log.push(stripAnsi(String(d)).slice(0, 2000));
-        if (entry.log.length > 50) entry.log.shift();
-      });
-      proc.on('exit', () => this.#onExit(id, entry));
+      let proc = null;
+      if (adopt) {
+        console.log(`[browser] ${id}: laufenden Browser übernommen (Port ${port})`);
+      } else {
+        // Independent of the cockpit process: on Windows a non-detached child sits in a kill-on-close job
+        // and is hard-killed (losing unsaved cookies/logins) when the cockpit crashes or is closed; a stderr
+        // pipe could break the same way. A cleanly stopped cockpit still closes it (stopAll), after a
+        // crash it keeps running and the next cockpit adopts it.
+        const logDir = this.ctx.store.p('browser-logs');
+        await fsp.mkdir(logDir, { recursive: true });
+        entry.logFile = path.join(logDir, `${id}.log`);
+        const fd = fs.openSync(entry.logFile, 'w');
+        try {
+          proc = spawn(exe, args, { stdio: ['ignore', 'ignore', fd], windowsHide: false, env, detached: true });
+        } finally {
+          fs.closeSync(fd);
+        }
+        proc.unref();
+        entry.proc = proc;
+        proc.on('exit', () => this.#onExit(id, entry));
+      }
       try {
         await waitForCdp(port, proc);
         entry.browser = await withTimeout(chromium.connectOverCDP(`http://127.0.0.1:${port}`), 20_000, 'CDP-Verbindung');
+        entry.browser.on('disconnected', () => this.#onExit(id, entry)); // closed by the user, crashed, adopted one ended
         entry.context = entry.browser.contexts()[0];
+        if (adopt) entry.headless = headless = /Headless/i.test(await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.product).catch(() => ''));
+        await this.#markProfile(entry.browser, id);
         if (headless) {
           const ua = headedUserAgent(exe, p.engine) ?? (await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.userAgent.replace('HeadlessChrome', 'Chrome')).catch(() => null));
           if (ua) entry.uaPatch = { userAgent: ua, platform: navigatorPlatform(), userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine) };
@@ -396,9 +522,9 @@ export class Browsers extends EventEmitter {
         await this.#activate(entry, first);
         entry.ready = true;
       } catch (e) {
-        try { proc.kill(); } catch { /* gone */ }
+        try { proc?.kill(); } catch { /* gone */ }
         this.running.delete(id);
-        const detail = entry.log.slice(-3).join('').trim();
+        const detail = logTail(entry.logFile);
         throw new UserError(`${e instanceof UserError ? e.message : `Browser-Start fehlgeschlagen: ${e.message}`}${detail ? `\n${detail}` : ''}`);
       } finally {
         entry.starting = null;
@@ -423,6 +549,39 @@ export class Browsers extends EventEmitter {
     }
   }
 
+  /** A port that is free and not reserved by any other identity. */
+  async #freePort(id) {
+    const reserved = new Set([...this.profiles.values()].filter((x) => x.id !== id).map((x) => x.port).filter(Boolean));
+    for (let port = BASE_PORT; port < BASE_PORT + 400; port++) {
+      if (!reserved.has(port) && await portFree(port)) return port;
+    }
+    throw new UserError('Kein freier Debug-Port für den Browser gefunden');
+  }
+
+  /**
+   * Is the browser listening on `port` this identity's own one (left running by a previous cockpit
+   * process)? Verified by the marker cookie in its profile; older profiles without a marker count when
+   * their profile folder is in use. A browser of another identity or a foreign one is never adopted.
+   */
+  async #isOwnBrowser(id, port, userDir) {
+    try {
+      const marker = await readMarker(port);
+      if (marker) return marker === id;
+      return profileLocked(userDir);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Persistent marker cookie: lets a later cockpit process recognise this identity's browser. */
+  async #markProfile(browser, id) {
+    try {
+      const s = await browser.newBrowserCDPSession();
+      await s.send('Storage.setCookies', { cookies: [{ name: MARKER_COOKIE, value: id, domain: MARKER_DOMAIN, path: '/', expires: Math.floor(Date.now() / 1000) + 10 * 365 * 86400 }] });
+      await s.detach();
+    } catch { /* marker is a safety net only */ }
+  }
+
   #onExit(id, entry) {
     clearInterval(entry.statsTimer);
     clearTimeout(entry.flushTimer);
@@ -438,15 +597,19 @@ export class Browsers extends EventEmitter {
   async stop(id) {
     const entry = this.running.get(id);
     if (!entry) return;
+    const exited = entry.proc && entry.proc.exitCode === null ? new Promise((r) => entry.proc.once('exit', r)) : null;
     try {
       const s = await entry.browser?.newBrowserCDPSession();
       await withTimeout(s.send('Browser.close'), 4000, 'Browser.close'); // clean exit flushes cookies
     } catch { /* fall back to kill */ }
-    await new Promise((r) => setTimeout(r, 400));
-    if (this.running.get(id) === entry) {
-      try { entry.proc?.kill(); } catch { /* gone */ }
-      this.#onExit(id, entry);
+    // wait until the process is really gone (it releases the profile lock last), kill if it hangs
+    if (exited) {
+      const ok = await Promise.race([exited.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
+      if (!ok) { try { entry.proc.kill(); } catch { /* gone */ } }
+    } else {
+      await waitUnlocked(this.dir(id), 6000); // adopted browser: no process handle
     }
+    if (this.running.get(id) === entry) this.#onExit(id, entry);
   }
 
   async stopAll() {

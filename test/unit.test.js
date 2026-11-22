@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import { Files } from '../server/files.js';
 import { Limits } from '../server/limits.js';
 import { Media } from '../server/media.js';
+import { Projects, SHARED_DIR_NAME } from '../server/projects.js';
+import { Schedules, nextCron, parseCron } from '../server/schedules.js';
 import { parseCookies } from '../server/security.js';
 import { diffModelUsage, parsePrice } from '../server/session-stats.js';
 import { Store } from '../server/store.js';
@@ -91,6 +93,72 @@ test('cookie parsing and constant-time compare', () => {
   assert.ok(safeEqual('abc', 'abc'));
   assert.ok(!safeEqual('abc', 'abd'));
   assert.ok(!safeEqual('abc', undefined));
+});
+
+test('cron: parse errors in German, next run follows standard cron rules', () => {
+  assert.throws(() => parseCron('* * *'), /5 Felder/);
+  assert.throws(() => parseCron('61 * * * *'), /Minute/);
+  assert.throws(() => parseCron('0 9 * * x'), /Wochentag/);
+  const base = new Date(2026, 10, 20, 8, 30).getTime(); // Fri 20 Nov 2026, 08:30 local
+  const at = (t) => { const d = new Date(t); return [d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getDay()]; };
+  assert.deepEqual(at(nextCron('0 9 * * 1-5', base)), [11, 20, 9, 0, 5]);        // today 09:00
+  assert.deepEqual(at(nextCron('0 9 * * 1-5', base + 3600_000)), [11, 23, 9, 0, 1]); // after 09:30 → Monday
+  assert.deepEqual(at(nextCron('*/15 * * * *', base)), [11, 20, 8, 45, 5]);
+  assert.deepEqual(at(nextCron('0 0 1 * *', base)), [12, 1, 0, 0, 2]);
+  assert.deepEqual(at(nextCron('30 8 * * 0,7', base)), [11, 22, 8, 30, 0]);       // 7 = Sunday too
+  assert.deepEqual(at(nextCron('@daily', base)), [11, 21, 0, 0, 6]);
+  // both day fields restricted → either matches (the 1st, or any Monday)
+  assert.deepEqual(at(nextCron('0 12 1 * 1', base)), [11, 23, 12, 0, 1]);
+});
+
+test('Schedules: fire due prompts, one-offs disable themselves, failures retry', async () => {
+  const store = new Store(tmp('sched'));
+  await store.init();
+  const sent = [];
+  let fail = false;
+  const ctx = {
+    store,
+    projects: { get: async (id) => { if (id !== 'demo') throw new Error('nope'); return { id }; } },
+    runners: { get: async () => ({ send: async (text) => { if (fail) throw new Error('Schon 6 Sessions aktiv'); sent.push(text); } }) },
+  };
+  const s = new Schedules(ctx);
+  await s.init();
+  s.stop();
+  const now = Date.now();
+  const every = await s.create('demo', { kind: 'every', everyMinutes: 5, prompt: 'Status prüfen', name: 'Check' });
+  const once = await s.create('demo', { kind: 'at', at: new Date(now + 60_000).toISOString(), prompt: 'Einmal' });
+  await assert.rejects(s.create('demo', { kind: 'cron', cron: 'kaputt', prompt: 'x' }), /5 Felder/);
+  await assert.rejects(s.create('demo', { kind: 'at', at: '2001-01-01T00:00', prompt: 'x' }), /Vergangenheit/);
+  await s.tick(now + 2 * 60_000);
+  assert.deepEqual(sent.map((t) => t.split('\n')[1]), ['Einmal']);
+  assert.equal(s.list().find((x) => x.id === once.id).enabled, false);
+  await s.tick(now + 6 * 60_000);
+  assert.ok(sent.at(-1).startsWith('[Zeitplan „Check“]'));
+  fail = true;
+  await s.tick(now + 12 * 60_000);
+  const e = s.list().find((x) => x.id === every.id);
+  assert.match(e.lastError, /Sessions aktiv/);
+  assert.ok(e.nextRun <= now + 13 * 60_000, 'retry within a minute');
+  // persisted
+  const again = new Schedules(ctx);
+  await again.init();
+  again.stop();
+  assert.equal(again.list().length, 2);
+});
+
+test('Projects: shared-claude folder is never a project', async () => {
+  const root = tmp('proj');
+  const store = new Store(path.join(root, 'data'));
+  await store.init();
+  const projects = new Projects({ config: { projectsDir: path.join(root, 'projects'), templatesDir: path.join(root, 'tpl'), defaultModel: '', defaultMode: 'default', defaultEffort: '', browserMcp: true, permissionModes: ['default'], allowBypass: false }, store });
+  fs.mkdirSync(path.join(root, 'projects', SHARED_DIR_NAME), { recursive: true });
+  const p = await projects.create({ name: 'Shared Claude', git: false });
+  assert.notEqual(p.id, SHARED_DIR_NAME);
+  const ids = (await projects.list()).map((x) => x.id);
+  assert.ok(!ids.includes(SHARED_DIR_NAME), ids.join(','));
+  await assert.rejects(projects.get(SHARED_DIR_NAME), /kein Projekt/);
+  const child = await projects.create({ name: 'Kind', parentId: p.id, git: false });
+  assert.equal(child.parentId, p.id);
 });
 
 test('AsyncQueue delivers in order and ends on close', async () => {

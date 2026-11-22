@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Timeline } from './timeline';
-import type { AuthSnapshot, BrowsersState, Catalog, GitHubSnapshot, Hello, HistoryResult, Limits, Project, RunnerStatus, ServiceInfo, SessionInfo } from './types';
+import type { AuthSnapshot, BrowsersState, Catalog, GitHubSnapshot, Hello, HistoryResult, Limits, Project, RunnerStatus, Schedule, ServiceInfo, SessionInfo } from './types';
 import { conn } from './ws';
 
 export type Filter = 'all' | 'chat' | 'commands';
@@ -40,6 +40,7 @@ interface State {
   browsers: BrowsersState | null;
   github: GitHubSnapshot | null;
   services: Record<string, ServiceInfo[]>;
+  schedules: Schedule[];
   usageOpen: boolean;
   preview: { path: string; at: number } | null;
   toasts: Toast[];
@@ -77,7 +78,7 @@ export const useStore = create<State>()((set, get) => {
     switch (msg.t) {
       case 'hello': {
         const h = msg as Hello & { t: string };
-        set({ hello: h, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits, browsers: h.browsers, github: h.github });
+        set({ hello: h, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits, browsers: h.browsers, github: h.github, schedules: h.schedules ?? [] });
         const remembered = s.activeId ?? storage.get(LS_ACTIVE);
         const pick = h.projects.find((p) => p.id === remembered)?.id ?? h.projects[0]?.id ?? null;
         get().selectProject(pick);
@@ -165,6 +166,9 @@ export const useStore = create<State>()((set, get) => {
       case 'binstall':
         if (s.browsers) set({ browsers: { ...s.browsers, status: { ...s.browsers.status, install: msg.install } } });
         return;
+      case 'schedules':
+        set({ schedules: msg.schedules ?? [] });
+        return;
       case 'github':
         set({ github: msg.github });
         if (msg.github?.login?.state === 'done' && s.github?.login?.state === 'running') get().toast('info', 'Mit GitHub verbunden.');
@@ -214,6 +218,7 @@ export const useStore = create<State>()((set, get) => {
     browsers: null,
     github: null,
     services: {},
+    schedules: [],
     usageOpen: false,
     preview: null,
     toasts: [],

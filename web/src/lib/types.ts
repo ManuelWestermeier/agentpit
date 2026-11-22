@@ -16,6 +16,8 @@ export interface Project {
   autoCommit: boolean;
   lastSessionId: string | null;
   dir: string;
+  /** set when another session's Claude started this one (sub-session) */
+  parentId?: string;
 }
 
 export interface ModelStats {
@@ -158,7 +160,15 @@ export interface EnvInfo {
   hints: { key: string; text: string; cmd: string }[];
 }
 
+export interface Schedule {
+  id: string; projectId: string; name: string; prompt: string;
+  kind: 'at' | 'every' | 'cron'; at?: number; everyMinutes?: number; cron?: string;
+  enabled: boolean; nextRun: number | null; lastRun: number | null; lastError: string | null; runs: number;
+  createdBy: string; createdAt: number;
+}
+
 export interface Hello {
+  schedules?: Schedule[];
   version: string;
   config: {
     allowBypass: boolean;

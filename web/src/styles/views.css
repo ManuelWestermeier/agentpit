@@ -69,6 +69,18 @@
 .install-box { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 520px; text-align: center; }
 .install-box .login-out { width: 100%; text-align: left; }
 
+/* ---- sub-sessions in the project list */
+.proj-sub { color: var(--text-3); }
+
+/* ---- schedules */
+.sched { border-top: 1px solid var(--line); margin-top: 6px; }
+.sched-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px 10px 6px 14px; border-bottom: 1px solid var(--line); }
+.sched-item.off { opacity: 0.55; }
+.sched-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sched-name { display: flex; align-items: center; gap: 6px; font-size: var(--t-s); font-weight: 500; }
+.sched-main .svc-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sched-main .err { color: var(--red, #e5695e); white-space: normal; }
+
 /* ---- stream & profile settings */
 .modal--wide { width: min(640px, calc(100vw - 32px)); }
 .btoolbar .btn.active { color: var(--amber); background: var(--amber-soft); }
