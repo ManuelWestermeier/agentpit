@@ -5,7 +5,7 @@ import { UserError, safeEqual } from './util.js';
 
 const COOKIE = 'cockpit_s';
 const SESSION_IDLE_MS = 30 * 24 * 3600_000;
-const MIN_PASSWORD = 12;
+const MIN_PASSWORD = 4;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOCAL_NAMES = ['localhost', '127.0.0.1', '[::1]'];
 

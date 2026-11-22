@@ -40,6 +40,22 @@ function headedUserAgent(exe, engine) {
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36${engine === 'msedge' ? ` Edg/${major}.0.0.0` : ''}`;
 }
 
+/**
+ * Headless Chromium reports "HeadlessChrome" in its client hints (Sec-CH-UA header and
+ * navigator.userAgentData) even when --user-agent is set; bot detection (LinkedIn, X, Google,
+ * Cloudflare) flags this. Return the metadata of a normal headed browser of the same version.
+ */
+function headedUaMetadata(fullVersion, engine) {
+  const major = String(fullVersion).split('.')[0];
+  const brand = engine === 'msedge' ? 'Microsoft Edge' : engine === 'chrome' ? 'Google Chrome' : null;
+  const list = (v) => [{ brand: 'Not_A Brand', version: major === v ? '24' : '24.0.0.0' }, { brand: 'Chromium', version: v }, ...(brand ? [{ brand, version: v }] : [])];
+  const platform = process.platform === 'win32' ? ['Windows', '15.0.0'] : process.platform === 'darwin' ? ['macOS', '14.0.0'] : ['Linux', ''];
+  return {
+    brands: list(major), fullVersionList: list(String(fullVersion)), fullVersion: String(fullVersion),
+    platform: platform[0], platformVersion: platform[1], architecture: process.arch.startsWith('arm') ? 'arm' : 'x86', bitness: '64', model: '', mobile: false, wow64: false,
+  };
+}
+
 const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer();
   s.once('error', () => resolve(false));
@@ -57,6 +73,9 @@ async function waitForCdp(port, ms = 20_000) {
   }
   throw new UserError('Browser antwortet nicht auf dem Debug-Port');
 }
+
+/** Max. unsent bytes per viewer before frames are skipped (~1–2 JPEG frames). */
+const FRAME_BUFFER_LIMIT = 384 * 1024;
 
 const num = (v, lo, hi, d = 0) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
 
@@ -180,7 +199,8 @@ export class Browsers extends EventEmitter {
 
   /** Linux server without a screen + Xvfb installed → real (headed) browser on a virtual display. */
   defaultHeadless() {
-    return !(process.platform === 'linux' && !process.env.DISPLAY && onPath('Xvfb'));
+    // headed browsers look like a normal user to bot detection; only fall back to headless without a screen
+    return process.platform === 'linux' && !process.env.DISPLAY && !onPath('Xvfb');
   }
 
   /** DISPLAY for headed browsers on a Linux server without a screen (starts one shared Xvfb). */
@@ -222,8 +242,12 @@ export class Browsers extends EventEmitter {
       '--remote-debugging-address=127.0.0.1',
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-features=Translate,MediaRouter',
+      `--disable-features=Translate,MediaRouter${process.platform === 'win32' ? ',CalculateNativeWinOcclusion' : ''}`,
       '--window-size=1366,860',
+      // keep rendering (and the screencast) going when the window is covered or in the background
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
     ];
     let headless = p.headless;
     let env = process.env;
@@ -242,7 +266,7 @@ export class Browsers extends EventEmitter {
     if (process.platform === 'linux' && process.getuid?.() === 0) args.push('--no-sandbox');
     args.push(p.startUrl || 'about:blank');
 
-    const entry = { id, port, headless, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
+    const entry = { id, port, headless, engine: p.engine, lang: p.lang, uaPatch: null, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
     this.running.set(id, entry);
     entry.starting = (async () => {
       const proc = spawn(exe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false, env });
@@ -256,6 +280,10 @@ export class Browsers extends EventEmitter {
         await waitForCdp(port);
         entry.browser = await withTimeout(chromium.connectOverCDP(`http://127.0.0.1:${port}`), 20_000, 'CDP-Verbindung');
         entry.context = entry.browser.contexts()[0];
+        if (headless) {
+          const ua = headedUserAgent(exe, p.engine) ?? (await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.userAgent.replace('HeadlessChrome', 'Chrome')).catch(() => null));
+          if (ua) entry.uaPatch = { userAgent: ua, platform: process.platform === 'win32' ? 'Win32' : process.platform === 'darwin' ? 'MacIntel' : 'Linux x86_64', userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine), ...(p.lang ? { acceptLanguage: [...new Set([p.lang, p.lang.split('-')[0]])].join(',') } : {}) };
+        }
         entry.context.on('page', (page) => { this.#watchPage(entry, page); this.#activate(entry, page).catch(() => {}); });
         for (const page of entry.context.pages()) this.#watchPage(entry, page);
         const first = entry.context.pages().at(-1) ?? await entry.context.newPage();
@@ -307,6 +335,10 @@ export class Browsers extends EventEmitter {
   #watchPage(entry, page) {
     if (page.__cockpitWatched) return;
     page.__cockpitWatched = true;
+    if (entry.uaPatch) {
+      // the override lives as long as this session stays attached, so keep it for the page's lifetime
+      entry.context.newCDPSession(page).then((s) => s.send('Emulation.setUserAgentOverride', entry.uaPatch)).catch(() => {});
+    }
     const update = () => this.#pushState(entry);
     page.on('framenavigated', (f) => { if (f === page.mainFrame()) update(); });
     page.on('load', update);
@@ -365,11 +397,30 @@ export class Browsers extends EventEmitter {
       if (entry.cdp !== cdp) return;
       const frame = { t: 'bframe', profileId: entry.id, data: f.data, w: f.metadata.deviceWidth, h: f.metadata.deviceHeight };
       entry.lastFrame = frame;
-      for (const c of entry.viewers) {
-        if (c.ws.bufferedAmount < 2 * 1024 * 1024) this.ctx.hub.send(c, frame); // drop frames for slow viewers
-      }
+      for (const c of entry.viewers) this.#sendFrame(entry, c);
     });
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 72, maxWidth: 1920, maxHeight: 1200, everyNthFrame: 1 });
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 65, maxWidth: 1920, maxHeight: 1200, everyNthFrame: 1 });
+  }
+
+  /**
+   * Latest frame wins: never queue frames behind a busy socket (that is what makes a stream lag).
+   * A viewer whose buffer is still full gets only the newest frame once it has drained.
+   */
+  #sendFrame(entry, c) {
+    if (c.ws.bufferedAmount < FRAME_BUFFER_LIMIT) {
+      entry.stale?.delete(c);
+      this.ctx.hub.send(c, entry.lastFrame);
+      return;
+    }
+    (entry.stale ??= new Set()).add(c);
+    if (entry.flushTimer) return;
+    entry.flushTimer = setTimeout(() => {
+      entry.flushTimer = null;
+      for (const v of [...(entry.stale ?? [])]) {
+        if (!entry.viewers.has(v) || v.ws.readyState !== 1) entry.stale.delete(v);
+        else if (entry.lastFrame) this.#sendFrame(entry, v);
+      }
+    }, 30);
   }
 
   async view(id, client, on) {

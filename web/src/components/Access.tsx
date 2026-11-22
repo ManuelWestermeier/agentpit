@@ -4,7 +4,7 @@ import { fmtAgo } from '../lib/format';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
 
-const MIN = 12;
+const MIN = 4;
 
 interface SecurityStatus {
   hasPassword: boolean;

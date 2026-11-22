@@ -18,7 +18,7 @@ async function ask(q) {
 
 let pw = process.env.COCKPIT_PASSWORD;
 if (!pw) {
-  pw = await ask('Neues Passwort (min. 12 Zeichen): ');
+  pw = await ask('Neues Passwort (min. 4 Zeichen): ');
   if (pw !== await ask('Wiederholen: ')) { console.error('Passwörter stimmen nicht überein.'); process.exit(1); }
 }
 const err = validatePassword(pw);
