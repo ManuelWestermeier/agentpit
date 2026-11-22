@@ -134,6 +134,14 @@ export class Projects extends EventEmitter {
       out.browserProfile = p.browserProfile;
     }
     if (typeof p.autoCommit === 'boolean') out.autoCommit = p.autoCommit;
+    // per-answer limits (0 = off): runner interrupts the answer when one is reached
+    if (p.turnLimits && typeof p.turnLimits === 'object') {
+      const n = (v, max) => Math.max(0, Math.min(max, Number(v) || 0));
+      out.turnLimits = { costUsd: n(p.turnLimits.costUsd, 1000), usagePct: n(p.turnLimits.usagePct, 100), minutes: n(p.turnLimits.minutes, 24 * 60), calls: Math.round(n(p.turnLimits.calls, 10_000)) };
+    }
+    // permanent permissions for resources outside the project (set by "Immer erlauben", revoked in settings)
+    if (Array.isArray(p.grants)) out.grants = [...new Set(p.grants.map(String).filter((g) => /^(db-read|db-write|session|browser):[\w./-]{1,140}$/.test(g)))].slice(0, 200);
+    if (p.autoCompactPct !== undefined) out.autoCompactPct = Math.max(0, Math.min(100, Math.round(Number(p.autoCompactPct) || 0)));
     // false once the user named the project – then Haiku (server/meta.js) leaves the name alone
     if (typeof p.autoTitle === 'boolean') out.autoTitle = p.autoTitle;
     // sub-session: started by another project's Claude (shown as its child)

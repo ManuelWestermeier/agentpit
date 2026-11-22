@@ -163,12 +163,21 @@ function SideFoot() {
         <span className="tally none" />
         <span className="acct-name">GitHub{github?.status?.loggedIn ? ` · ${github.status.login}` : github?.status?.installed === false ? ' – gh fehlt' : ' – verbinden'}</span>
       </button>
-      {hello.env.hints.filter((h) => !hidden.includes(h.key)).map((h) => (
-        <div className="hint" key={h.key}>
-          <button className="hint-x" onClick={() => hide(h.key)} aria-label="Hinweis ausblenden" title="Ausblenden"><X size={11} /></button>
-          {h.text}<code>{h.cmd}</code>
-        </div>
-      ))}
+      {hello.env.hints.filter((h) => !hidden.includes(h.key)).map((h) => {
+        const job = hello.installs?.[h.key];
+        return (
+          <div className="hint" key={h.key} title={h.why ? `${h.text} – ${h.why}` : h.text}>
+            <button className="hint-x" onClick={() => hide(h.key)} aria-label="Hinweis ausblenden" title="Ausblenden"><X size={11} /></button>
+            <span>{h.text}</span>
+            {h.install ? (
+              <button className="btn small hint-btn" disabled={job?.state === 'running'} title={job?.lines.slice(-3).join('\n') || h.cmd}
+                onClick={() => act(() => conn.call('env.install', { key: h.key }))}>
+                {job?.state === 'running' ? 'installiert …' : job?.state === 'failed' ? 'Erneut versuchen' : 'Installieren'}
+              </button>
+            ) : <code>{h.cmd}</code>}
+          </div>
+        );
+      })}
       {hello.config.hasPassword && <a className="acct acct-link" href="/logout">Abmelden</a>}
     </div>
   );

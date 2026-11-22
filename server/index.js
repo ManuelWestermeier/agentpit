@@ -8,6 +8,7 @@ import { Auth } from './auth.js';
 import { Browsers } from './browsers.js';
 import { CdpRelay } from './cdp-relay.js';
 import { Databases } from './databases.js';
+import { Installer } from './installer.js';
 import { Janitor } from './janitor.js';
 import { Meta } from './meta.js';
 import { Schedules } from './schedules.js';
@@ -91,6 +92,8 @@ async function main() {
     ctx.terminals.init(),
   ]);
   ctx.env = env;
+  ctx.checkEnv = () => checkEnvironment({ config: cfg, root: ROOT });
+  ctx.installer = new Installer(ctx);
   await ctx.browsers.init();
   await ctx.relay.start();
   await ctx.schedules.init();
@@ -119,6 +122,7 @@ async function main() {
       terminals: ctx.terminals.available,
       remote: !client?.local,
       hasPassword: security.hasPassword(),
+      autoCompactPct: cfg.autoCompactPct,
     },
     browsers: { profiles: ctx.browsers.list(), status: ctx.browsers.status() },
     github: ctx.github.snapshot(),
@@ -129,12 +133,14 @@ async function main() {
     projects: await ctx.projects.list(),
     runners: ctx.runners.snapshots(),
     schedules: ctx.schedules.list(),
+    installs: ctx.installer.snapshot(),
   });
 
   // ---- broadcasts
   const { hub } = ctx;
   ctx.projects.on('change', throttle(async () => hub.toAll({ t: 'projects', projects: await ctx.projects.list() }), 300));
   ctx.schedules.on('change', throttle(() => hub.toAll({ t: 'schedules', schedules: ctx.schedules.list() }), 300));
+  ctx.installer.on('change', throttle(() => hub.toAll({ t: 'env', env: ctx.env, installs: ctx.installer.snapshot() }), 300));
   ctx.auth.on('change', () => hub.toAll({ t: 'auth', auth: ctx.auth.snapshot() }));
   ctx.catalog.on('change', () => hub.toAll({ t: 'catalog', catalog: ctx.catalog.snapshot() }));
   ctx.limits.on('change', throttle(() => hub.toAll({ t: 'limits', limits: ctx.limits.snapshot() }), 500));

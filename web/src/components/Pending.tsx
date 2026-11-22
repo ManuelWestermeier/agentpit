@@ -40,7 +40,9 @@ function PermCard({ req, projectId }: { req: PermissionRequest; projectId: strin
   });
 
   let detail = null;
-  if (isCmd) {
+  if (req.access) {
+    detail = null; // title + description say everything
+  } else if (isCmd) {
     detail = <textarea className="textarea" value={cmd} onChange={(e) => setCmd(e.target.value)} spellCheck={false} aria-label="Befehl (änderbar)" rows={Math.min(8, cmd.split('\n').length + 1)} />;
   } else if (req.toolName === 'Edit' && typeof i.old_string === 'string') {
     detail = <><div className="perm-sub mono">{i.file_path}</div><div style={{ background: 'var(--sunken)', borderRadius: 4, marginTop: 6 }}><DiffView a={i.old_string} b={String(i.new_string ?? '')} /></div></>;
@@ -64,7 +66,7 @@ function PermCard({ req, projectId }: { req: PermissionRequest; projectId: strin
       )}
       <div className="perm-actions">
         <button className="btn primary" onClick={() => allow(false)}>{edited ? 'Geänderten Befehl ausführen' : 'Erlauben'}</button>
-        {req.canAlways && !edited && <button className="btn" onClick={() => allow(true)} title="Regel in .claude/settings.local.json speichern">Immer erlauben</button>}
+        {req.canAlways && !edited && <button className="btn" onClick={() => allow(true)} title={req.access ? 'Für dieses Projekt merken' : 'Regel in .claude/settings.local.json speichern'}>Immer erlauben</button>}
         <span className="spacer" />
         {denying
           ? <button className="btn danger" onClick={() => respond(projectId, req.id, { decision: 'deny', message: reason || undefined })}>Ablehnen senden</button>

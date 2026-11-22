@@ -151,6 +151,12 @@ export class Timeline {
       case 'error':
         this.push({ kind: 'note', id: this.nid('e'), v: 0, ts, level: 'error', text: 'Claude Code ist abgestürzt', detail: ev.text });
         return;
+      case 'limit':
+        this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'warn', text: ev.text });
+        return;
+      case 'context_saved':
+        this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: ev.text });
+        return;
       case 'setting': {
         const label: Record<string, string> = { model: 'Modell', mode: 'Modus', effort: 'Effort' };
         this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: `${label[ev.key] ?? ev.key} → ${ev.value}` });

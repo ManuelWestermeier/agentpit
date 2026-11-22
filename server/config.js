@@ -70,6 +70,8 @@ export const config = Object.freeze({
   previewPublicUrl: (env.PREVIEW_PUBLIC_URL || '').replace(/\/+$/, ''),
   maxBrowsers: int(env.MAX_BROWSERS, 4, 1, 20),
   historyLimit: int(env.HISTORY_LIMIT, 4000, 200, 50_000),
+  // summarise the context between answers from this fill level on (0 = only Claude Code's own late auto-compact)
+  autoCompactPct: int(env.AUTO_COMPACT_PCT, 75, 0, 100),
   // automatic cleanup (server/janitor.js); ages in days since last change
   cleanup: bool(env.CLEANUP, true),
   trashDays: int(env.TRASH_DAYS, 30, 1, 3650),                     // deleted projects/identities in trash/

@@ -18,16 +18,32 @@ export default function ServicesView() {
   const terminals = useStore((s) => s.hello?.config.terminals);
   const [sel, setSel] = useState<string | null>(null);
   const [edit, setEdit] = useState<Partial<ServiceInfo> | null>(null);
+  const [scope, setScope] = useState<'project' | 'all'>('project');
+  const [allList, setAllList] = useState<ServiceInfo[]>([]);
 
   useEffect(() => {
     if (!pid) return;
     conn.call<ServiceInfo[]>('svc.list', { projectId: pid }).then((list) => useStore.setState((s) => ({ services: { ...s.services, [pid]: list } }))).catch(() => {});
   }, [pid]);
-  useEffect(() => { setSel(null); }, [pid]);
+  useEffect(() => { setSel(null); }, [pid, scope]);
+  // overview of all projects: initial list + live updates per project
+  useEffect(() => {
+    if (scope !== 'all') return;
+    conn.call<ServiceInfo[]>('svc.listAll').then(setAllList).catch(() => {});
+    const off = conn.onMessage((m) => {
+      if (m.t !== 'services_all') return;
+      setAllList((cur) => {
+        const name = cur.find((s) => s.projectId === m.projectId)?.projectName ?? m.projectId;
+        return [...cur.filter((s) => s.projectId !== m.projectId), ...(m.services as ServiceInfo[]).map((s) => ({ ...s, projectId: m.projectId, projectName: name }))];
+      });
+    });
+    return () => { off(); };
+  }, [scope]);
   if (!project) return null;
 
-  const list = services ?? [];
-  const current = list.find((s) => s.id === sel);
+  const list = scope === 'all' ? allList : (services ?? []).map((s) => ({ ...s, projectId: pid }));
+  const keyOf = (s: ServiceInfo) => `${s.projectId}/${s.id}`;
+  const current = list.find((s) => keyOf(s) === sel);
   const openInBrowser = async (url: string) => {
     const profileId = project.browserProfile || useStore.getState().browsers?.profiles[0]?.id;
     if (!profileId) return;
@@ -41,36 +57,47 @@ export default function ServicesView() {
     <div className="svcview">
       <div className="svc-left">
         <div className="git-bar">
-          <b>Dienste</b><span className="faint">cockpit.services.json</span>
-          <button className="btn small" style={{ marginLeft: 'auto' }} onClick={() => setEdit({ name: '', command: '' })}><Plus size={12} /> Dienst</button>
-        </div>
-        {list.map((s) => (
-          <div key={s.id} className={`svc${sel === s.id ? ' on' : ''}`}>
-            <button className="svc-main" onClick={() => setSel(s.id)}>
-              <span className={`tally ${LAMP[s.status]}`} />
-              <span className="svc-name">{s.name}</span>
-              <span className="svc-meta mono">{s.command}</span>
-              <span className="svc-meta">{LABEL[s.status]}{s.startedAt && s.status === 'running' ? ` seit ${fmtAgo(s.startedAt).replace('vor ', '')}` : ''}{s.exitCode != null && s.status !== 'running' ? ` (Code ${s.exitCode})` : ''}</span>
-            </button>
-            <div className="svc-actions">
-              {s.status === 'running' || s.status === 'starting'
-                ? <><button className="btn ghost icon small" title="Stoppen" onClick={() => act(() => conn.call('svc.stop', { projectId: pid, id: s.id }))}><Square size={11} fill="currentColor" /></button>
-                    <button className="btn ghost icon small" title="Neu starten" onClick={() => act(() => conn.call('svc.restart', { projectId: pid, id: s.id }))}><RotateCw size={12} /></button></>
-                : <button className="btn ghost icon small" title="Starten" onClick={() => { setSel(s.id); act(() => conn.call('svc.start', { projectId: pid, id: s.id })); }}><Play size={12} /></button>}
-              {(s.url || s.detectedUrl) && <button className="btn ghost icon small" title="Im Browser des Servers öffnen" onClick={() => openInBrowser(s.url || s.detectedUrl!)}><Globe size={12} /></button>}
-              <button className="btn ghost icon small" title="Bearbeiten" onClick={() => setEdit(s)}><Pencil size={11} /></button>
-            </div>
+          <div className="seg" role="radiogroup" aria-label="Bereich">
+            <button type="button" role="radio" aria-checked={scope === 'project'} className={scope === 'project' ? 'on' : ''} onClick={() => setScope('project')}>Projekt</button>
+            <button type="button" role="radio" aria-checked={scope === 'all'} className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>Alle Projekte</button>
           </div>
-        ))}
-        {terminals && <button className={`svc-term${sel === '__term' ? ' on' : ''}`} onClick={() => setSel('__term')}><SquareTerminal size={13} /> Terminal</button>}
-        <SchedulesPanel projectId={pid} />
-        <HookInfo projectId={pid} />
+          {scope === 'project' && <button className="btn small" style={{ marginLeft: 'auto' }} onClick={() => setEdit({ name: '', command: '' })}><Plus size={12} /> Service</button>}
+        </div>
+        {list.map((s) => {
+          const spid = s.projectId ?? pid;
+          const h = s.healthState;
+          return (
+            <div key={keyOf(s)} className={`svc${sel === keyOf(s) ? ' on' : ''}`}>
+              <button className="svc-main" onClick={() => setSel(keyOf(s))}>
+                <span className={`tally ${s.status === 'running' && h && !h.ok ? 'error' : LAMP[s.status] || 'none'}`} />
+                <span className="svc-name">{s.name}{scope === 'all' && <span className="faint"> · {s.projectName}</span>}</span>
+                <span className="svc-meta mono">{s.port ? `:${s.port} · ` : ''}{s.command}</span>
+                <span className="svc-meta">
+                  {LABEL[s.status]}{s.startedAt && s.status === 'running' ? ` seit ${fmtAgo(s.startedAt).replace('vor ', '')}` : ''}{s.exitCode != null && s.status !== 'running' ? ` (Code ${s.exitCode})` : ''}
+                  {s.status === 'running' && h && <span className={h.ok ? '' : 'err'}> · {h.ok ? `gesund, ${h.ms} ms` : `antwortet nicht${h.code ? ` (${h.code})` : ''}`}</span>}
+                  {s.restarts ? ` · ${s.restarts}× neu gestartet` : ''}
+                </span>
+              </button>
+              <div className="svc-actions">
+                {s.status === 'running' || s.status === 'starting'
+                  ? <><button className="btn ghost icon small" title="Stoppen" onClick={() => act(() => conn.call('svc.stop', { projectId: spid, id: s.id }))}><Square size={11} fill="currentColor" /></button>
+                      <button className="btn ghost icon small" title="Neu starten" onClick={() => act(() => conn.call('svc.restart', { projectId: spid, id: s.id }))}><RotateCw size={12} /></button></>
+                  : <button className="btn ghost icon small" title="Starten" onClick={() => { setSel(keyOf(s)); act(() => conn.call('svc.start', { projectId: spid, id: s.id })); }}><Play size={12} /></button>}
+                {(s.url || s.detectedUrl) && <button className="btn ghost icon small" title="Im Browser des Servers öffnen" onClick={() => openInBrowser(s.url || s.detectedUrl!)}><Globe size={12} /></button>}
+                {spid === pid && <button className="btn ghost icon small" title="Bearbeiten" onClick={() => setEdit(s)}><Pencil size={11} /></button>}
+              </div>
+            </div>
+          );
+        })}
+        {scope === 'project' && terminals && <button className={`svc-term${sel === '__term' ? ' on' : ''}`} onClick={() => setSel('__term')}><SquareTerminal size={13} /> Terminal</button>}
+        {scope === 'project' && <SchedulesPanel projectId={pid} />}
+        {scope === 'project' && <HookInfo projectId={pid} />}
       </div>
       <div className="svc-right">
         {sel === '__term' ? <Suspense fallback={null}><TerminalPanel key={pid} /></Suspense>
-          : current ? <Logs projectId={pid} service={current} /> : <div className="empty" />}
+          : current ? <Logs projectId={current.projectId ?? pid} service={current} /> : <div className="empty" />}
       </div>
-      {edit && <ServiceDialog projectId={pid} service={edit} onClose={() => setEdit(null)} />}
+      {edit && <ServiceDialog projectId={pid} service={edit} others={(services ?? []).filter((x) => x.id !== edit.id)} onClose={() => setEdit(null)} />}
     </div>
   );
 }
@@ -122,19 +149,41 @@ function HookInfo({ projectId }: { projectId: string }) {
   );
 }
 
-function ServiceDialog({ projectId, service, onClose }: { projectId: string; service: Partial<ServiceInfo>; onClose: () => void }) {
-  const [f, setF] = useState({ name: service.name ?? '', command: service.command ?? '', cwd: service.cwd ?? '', url: service.url ?? '', autostart: !!service.autostart, env: Object.entries(service.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n') });
+function ServiceDialog({ projectId, service, others, onClose }: { projectId: string; service: Partial<ServiceInfo>; others: ServiceInfo[]; onClose: () => void }) {
+  const [f, setF] = useState({
+    name: service.name ?? '', command: service.command ?? '', cwd: service.cwd ?? '', url: service.url ?? '', autostart: !!service.autostart,
+    env: Object.entries(service.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n'),
+    port: service.port ? String(service.port) : '', health: service.health ?? '', restart: service.restart ?? 'no', dependsOn: service.dependsOn ?? [],
+  });
   const close = useCallback(onClose, [onClose]);
   useEscape(close);
   const save = async () => {
     const env = Object.fromEntries(f.env.split('\n').map((l) => l.trim()).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
-    if (await act(() => conn.call('svc.save', { projectId, service: { ...f, env, id: service.id } })) !== undefined) onClose();
+    if (await act(() => conn.call('svc.save', { projectId, service: { ...f, env, port: f.port ? Number(f.port) : null, id: service.id } })) !== undefined) onClose();
   };
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label="Dienst">
-        <h2>{service.id ? 'Dienst bearbeiten' : 'Neuer Dienst'}</h2>
-        <p>Läuft im Projektordner mit deinen Rechten. Gespeichert in <code>cockpit.services.json</code> (versioniert, Claude kann es lesen und ändern).</p>
+      <div className="modal" role="dialog" aria-label="Service">
+        <h2>{service.id ? 'Service bearbeiten' : 'Neuer Service'}</h2>
+        <div className="modal-row">
+          <div><label className="label" htmlFor="sv-p">Port (→ PORT)</label><input id="sv-p" className="input mono" inputMode="numeric" value={f.port} onChange={(e) => setF({ ...f, port: e.target.value.replace(/\D/g, '') })} placeholder="3000" /></div>
+          <div><label className="label" htmlFor="sv-h">Health-Check</label><input id="sv-h" className="input mono" value={f.health} onChange={(e) => setF({ ...f, health: e.target.value })} placeholder="/health" /></div>
+        </div>
+        <div className="modal-row">
+          <div>
+            <label className="label" htmlFor="sv-r">Neustart</label>
+            <select id="sv-r" className="select" value={f.restart} onChange={(e) => setF({ ...f, restart: e.target.value as 'no' | 'on-failure' | 'always' })}>
+              <option value="no">nie</option><option value="on-failure">bei Absturz</option><option value="always">immer</option>
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="sv-d">Startet nach</label>
+            <select id="sv-d" className="select" multiple size={Math.min(3, Math.max(1, others.length))} value={f.dependsOn} disabled={!others.length}
+              onChange={(e) => setF({ ...f, dependsOn: [...e.target.selectedOptions].map((o) => o.value) })}>
+              {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+        </div>
         <div className="modal-row">
           <div><label className="label" htmlFor="sv-n">Name</label><input id="sv-n" className="input" autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Dev-Server" /></div>
           <div><label className="label" htmlFor="sv-c">Unterordner</label><input id="sv-c" className="input mono" value={f.cwd} onChange={(e) => setF({ ...f, cwd: e.target.value })} placeholder="(Projektordner)" /></div>

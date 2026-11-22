@@ -10,13 +10,16 @@ export function ProjectSettings({ project, onClose }: { project: Project; onClos
   const [headless, setHeadless] = useState(project.browser.headless);
   const [profile, setProfile] = useState(project.browserProfile);
   const [autoCommit, setAutoCommit] = useState(project.autoCommit);
+  const [compactPct, setCompactPct] = useState(project.autoCompactPct != null ? String(project.autoCompactPct) : '');
   const [confirmDelete, setConfirmDelete] = useState('');
+  const grants = project.grants ?? [];
+  const revoke = (g: string) => act(() => conn.call('project.update', { projectId: project.id, patch: { grants: grants.filter((x) => x !== g) } }));
   const runner = useStore((s) => s.runners[project.id]);
   const profiles = useStore((s) => s.browsers?.profiles ?? []);
   useEscape(onClose);
 
   const save = async () => {
-    const patch = { name, autoCommit, browserProfile: profile, browser: { enabled: browser, headless } };
+    const patch = { name, autoCommit, browserProfile: profile, browser: { enabled: browser, headless }, ...(compactPct !== '' ? { autoCompactPct: Number(compactPct) } : {}) };
     if (await act(() => conn.call('project.update', { projectId: project.id, patch }), 'Gespeichert')) onClose();
   };
   const remove = async () => {
@@ -35,18 +38,37 @@ export function ProjectSettings({ project, onClose }: { project: Project; onClos
         <span className="label" style={{ marginTop: 16 }}>Browser für Claude</span>
         <label className="check"><input type="checkbox" checked={browser} onChange={(e) => setBrowser(e.target.checked)} /> Browser-Tools aktivieren (Playwright MCP)</label>
         <select className="select" style={{ marginTop: 8 }} disabled={!browser} value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Browser-Identität">
-          <option value="">Eigenes Projektprofil (unsichtbar, nicht live steuerbar)</option>
+          <option value="">isolierter Browser ohne Logins</option>
           {profiles.map((p) => <option key={p.id} value={p.id}>Identität: {p.name}{p.temporary ? ' (temporär)' : ''}</option>)}
         </select>
         {browser && !profile && (
           <label className="check" style={{ marginTop: 6 }}><input type="checkbox" checked={headless} onChange={(e) => setHeadless(e.target.checked)} /> Unsichtbar (headless)</label>
         )}
         <p className="small-text muted" style={{ marginTop: 6 }}>
-          Mit einer Identität arbeitet Claude in demselben Browser, den du live siehst und steuerst – samt deinen Logins. Wirkt ab dem nächsten Prozessstart{runner?.live ? ' (der laufende Prozess behält seine Einstellung)' : ''}.
+          Mit einer Identität arbeitet Claude in demselben Browser, den du live siehst – samt deinen Logins. Ein Wechsel wirkt sofort{runner?.live ? ', auch in der laufenden Session' : ''}.
         </p>
 
         <span className="label" style={{ marginTop: 16 }}>Versionskontrolle</span>
         <label className="check"><input type="checkbox" checked={autoCommit} onChange={(e) => setAutoCommit(e.target.checked)} /> Nach jeder abgeschlossenen Aufgabe automatisch committen</label>
+
+        <span className="label" style={{ marginTop: 16 }}>Kontext</span>
+        <label className="check" style={{ gap: 6 }}>
+          Zusammenfassen ab
+          <input className="input" style={{ width: 70, height: 26 }} type="number" min={0} max={100} value={compactPct} placeholder={String(useStore.getState().hello?.config.autoCompactPct ?? 75)} onChange={(e) => setCompactPct(e.target.value)} />
+          % Füllung (0 = nur Claude Codes eigene)
+        </label>
+        <p className="small-text muted">Der vollständige Verlauf bleibt in <code>context/</code> erhalten.</p>
+
+        {grants.length > 0 && (
+          <>
+            <span className="label" style={{ marginTop: 16 }}>Dauerhafte Freigaben</span>
+            <ul className="grants">
+              {grants.map((g) => (
+                <li key={g}><code>{g}</code><button className="btn ghost small" onClick={() => revoke(g)}>Entziehen</button></li>
+              ))}
+            </ul>
+          </>
+        )}
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => act(() => conn.call('project.update', { projectId: project.id, patch: { rotateHookToken: true } }), 'Neuer Hook-Token – laufende Dienste neu starten')} title="Macht alte Hook-Token ungültig">Hook-Token erneuern</button>

@@ -142,6 +142,8 @@ export function createActions(ctx) {
     'browsers.input': async (msg) => { await ctx.browsers.input(String(msg.id), msg.ev ?? {}); return null; },
     'browsers.nav': async (msg) => { await ctx.browsers.navigate(String(msg.id), msg); return null; },
     'browsers.tab': async (msg) => { await ctx.browsers.tab(String(msg.id), msg); return null; },
+    'env.install': (msg) => { ctx.installer.start(String(msg.key)); return null; },
+    'svc.listAll': () => ctx.services.listAll(),
     'cleanup.run': () => ctx.janitor.run(),
     'cleanup.last': () => ctx.janitor.last,
     'schedules.list': (msg) => ctx.schedules.list(msg.projectId ? pid(msg) : undefined),

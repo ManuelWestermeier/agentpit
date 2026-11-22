@@ -22,6 +22,12 @@ export interface Project {
   description?: string;
   /** false once the user named the project themselves */
   autoTitle?: boolean;
+  /** resources outside the project the user allowed permanently ("db-read:<project>/<conn>", "session:<id>", "browser:<id>") */
+  grants?: string[];
+  /** summarise the context from this fill level on (%); undefined = server default */
+  autoCompactPct?: number;
+  /** per-answer limits, 0 = off */
+  turnLimits?: { costUsd: number; usagePct: number; minutes: number; calls: number };
 }
 
 export interface ModelStats {
@@ -70,6 +76,8 @@ export interface PermissionRequest {
   mcpServer: { name: string; source: string } | null;
   canAlways: boolean;
   defaultToNo: boolean;
+  /** cockpit resource access (another project's database/session …), "always" is remembered per project */
+  access?: boolean;
   ts: number;
 }
 
@@ -92,7 +100,7 @@ export interface RunnerStatus {
   commands: string[];
   suggestion: string | null;
   lastActivityAt: number;
-  turn: { startedAt: number; calls: number; out: number } | null;
+  turn: { startedAt: number; calls: number; out: number; estCost?: number } | null;
   stats: SessionStats | null;
 }
 
@@ -161,8 +169,10 @@ export interface EnvInfo {
   browser: { channel: string; chrome: boolean; msedge: boolean };
   playwrightMcp: boolean;
   pty: boolean;
-  hints: { key: string; text: string; cmd: string }[];
+  hints: { key: string; text: string; why?: string; cmd: string; install?: boolean }[];
 }
+
+export type InstallJobs = Record<string, { state: 'running' | 'done' | 'failed'; lines: string[] }>;
 
 export interface Schedule {
   id: string; projectId: string; name: string; prompt: string;
@@ -173,6 +183,7 @@ export interface Schedule {
 
 export interface Hello {
   schedules?: Schedule[];
+  installs?: InstallJobs;
   version: string;
   config: {
     allowBypass: boolean;
@@ -183,6 +194,7 @@ export interface Hello {
     terminals: boolean;
     remote: boolean;
     hasPassword: boolean;
+    autoCompactPct?: number;
   };
   browsers: BrowsersState;
   github: GitHubSnapshot;
@@ -228,4 +240,10 @@ export interface GitHubSnapshot {
 export interface ServiceInfo {
   id: string; name: string; command: string; cwd: string; url: string; autostart: boolean; env: Record<string, string>;
   status: 'stopped' | 'starting' | 'running' | 'exited' | 'crashed'; pid: number | null; exitCode: number | null; startedAt: number | null; detectedUrl: string | null;
+  port?: number | null; health?: string; restart?: 'no' | 'on-failure' | 'always'; dependsOn?: string[];
+  /** last health check while running */
+  healthState?: HealthState | null;
+  restarts?: number;
+  projectId?: string; projectName?: string;
 }
+export interface HealthState { ok: boolean; code: number | null; ms: number; at: number; url: string }

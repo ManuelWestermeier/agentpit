@@ -198,6 +198,56 @@ function RunSettings() {
           {efforts.map((l) => <option key={l} value={l}>Effort: {l}</option>)}
         </select>
       )}
+      <TurnLimits />
     </div>
+  );
+}
+
+const LIMIT_FIELDS: [keyof TurnLimitSet, string, string, number][] = [
+  ['costUsd', 'Kosten', '$', 0.05],
+  ['usagePct', '5-h-Limit', '%', 0.5],
+  ['minutes', 'Zeit', 'min', 1],
+  ['calls', 'Schritte', '', 1],
+];
+type TurnLimitSet = { costUsd: number; usagePct: number; minutes: number; calls: number };
+
+/** Per-answer limits: the running answer stops as soon as one is reached (0 / empty = no limit). */
+function TurnLimits() {
+  const { project, runner } = useActive();
+  const [open, setOpen] = useState(false);
+  const cur: TurnLimitSet = { costUsd: 0, usagePct: 0, minutes: 0, calls: 0, ...(project?.turnLimits ?? {}) };
+  const [draft, setDraft] = useState(cur);
+  if (!project) return null;
+  const active = LIMIT_FIELDS.filter(([k]) => cur[k] > 0);
+  const label = active.length ? active.map(([k, , unit]) => `${k === 'costUsd' ? '≤ ' : ''}${cur[k]}${unit ? ` ${unit}` : ' Schritte'}`).join(' · ') : 'Limit';
+  const est = runner?.turn?.estCost;
+  const save = async () => {
+    await act(() => conn.call('project.update', { projectId: project.id, patch: { turnLimits: draft } }));
+    setOpen(false);
+  };
+  return (
+    <span className="limits">
+      <button className={`mini-select limits-btn${active.length ? ' on' : ''}`} title="Limits pro Antwort" aria-expanded={open}
+        onClick={() => { setDraft(cur); setOpen((v) => !v); }}>
+        {label}{runner?.turn && cur.costUsd > 0 && est != null ? ` (${est.toFixed(2)} $)` : ''}
+      </button>
+      {open && (
+        <div className="limits-pop" role="dialog" aria-label="Limits pro Antwort">
+          <b>Pro Antwort höchstens</b>
+          {LIMIT_FIELDS.map(([k, name, unit, step]) => (
+            <label key={k} className="limits-row">
+              <span>{name}</span>
+              <input className="input" type="number" min={0} step={step} value={draft[k] || ''} placeholder="aus"
+                onChange={(e) => setDraft({ ...draft, [k]: Number(e.target.value) || 0 })} />
+              <span className="faint">{unit}</span>
+            </label>
+          ))}
+          <div className="limits-actions">
+            <button className="btn ghost small" onClick={() => setDraft({ costUsd: 0, usagePct: 0, minutes: 0, calls: 0 })}>Alle aus</button>
+            <button className="btn primary small" onClick={save}>Übernehmen</button>
+          </div>
+        </div>
+      )}
+    </span>
   );
 }

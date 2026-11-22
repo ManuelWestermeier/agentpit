@@ -28,6 +28,9 @@ const cockpitAppend = ({ projectId, sharedDir, parentId }) => `# Umgebung: Agent
 - Alles, was sich im Cockpit einrichten lässt – Datenbankverbindungen (db_connect), Dienste (service_define), Zeitpläne, Browser-Identitäten, Sub-Sessions –, richtest du selbst über die mcp__cockpit__-Tools ein; der Nutzer bestätigt per Freigabe. Bitte ihn nicht, das selbst in der Oberfläche zu tun. Nur Logins/Passwörter/2FA erledigt immer der Nutzer.
 - Dieses Projekt/diese Session: "${projectId}"${parentId ? ` – gestartet von der Session "${parentId}" (Ergebnis dort per session_send melden, wenn die Aufgabe es verlangt)` : ''}.
 
+## Verlauf in context/
+Jede Session schreibt ihren vollständigen Verlauf (Prompts, deine Antworten, Zusammenfassungen) nach ./context/<datum>-<session>.md. Wird dein Kontext zusammengefasst, fehlen dir Details – dann dort nachlesen (grep), statt zu raten. Auch frühere Sessions dieses Projekts liegen dort.
+
 ## Gemeinsamer Ordner ../${SHARED_DIR_NAME}/
 Absolut: ${sharedDir}
 Alle Claude-Sessions im Cockpit lesen und schreiben dort – für Wissen, Daten und Übergaben zwischen Sessions (z. B. Recherche-Ergebnisse, Listen, Status einer Pipeline, globale Notizen über den Nutzer).
@@ -40,6 +43,14 @@ Alle Claude-Sessions im Cockpit lesen und schreiben dort – für Wissen, Daten 
 Playwright (mcp__playwright__*) steuert eine Browser-Identität des Cockpits: ein eigenes Profil mit eigenen Logins, das der Nutzer live sieht.
 - browser_info zeigt die aktive und alle verfügbaren Identitäten (mit Login-Hinweisen), browser_use wechselt sofort – auch mitten in der Aufgabe; der nächste Playwright-Aufruf läuft dann in der anderen Identität.
 - Logins (Passwörter, 2FA) erledigt der Nutzer selbst im Cockpit; niemals Passwörter eintippen. Ist eine Seite nicht eingeloggt, sag dem Nutzer, in welcher Identität er sich anmelden soll.
+
+## Datenbanken und Diagramme (mcp__cockpit__*)
+- db_create legt eine SQLite-Datenbank im Projekt an; db_connect richtet bestehende ein (SQLite, PostgreSQL, MySQL – Zugangsdaten nur vom Nutzer).
+- db_connections(all: true) zeigt die Datenbanken aller Projekte; mit project-Parameter nutzt du sie (der Nutzer gibt den Zugriff frei).
+- db_chart / chart_create zeichnen Diagramme (bar, line, area, scatter) nach output/charts/ – zum Visualisieren immer diese nehmen.
+
+## Freigaben
+Ressourcen außerhalb dieses Projekts (Datenbanken und Sessions anderer Projekte, nicht verknüpfte Browser-Identitäten) gibt der Nutzer frei – das Werkzeug fragt ihn selbst und wartet. Einfach aufrufen; bei Ablehnung nicht erneut versuchen, sondern Alternative nennen.
 
 ## Sub-Sessions und Zeitpläne (mcp__cockpit__*)
 - session_create startet eine weitere Claude-Session (eigenes Projekt, optional eigene Browser-Identität) mit einer Aufgabe; session_send, session_status, session_wait, session_list, session_stop steuern sie. So lassen sich Arbeiten parallelisieren, z. B. eine Session pro Account/Identität.
@@ -138,7 +149,7 @@ export class Runner extends EventEmitter {
       commands: this.commands,
       suggestion: this.suggestion,
       lastActivityAt: this.lastActivityAt,
-      turn: this.turn ? { startedAt: this.turn.startedAt, calls: this.turn.calls, out: this.stream.out } : null,
+      turn: this.turn ? { startedAt: this.turn.startedAt, calls: this.turn.calls, out: this.stream.out, estCost: this.turn.estCost } : null,
       stats: this.stats,
     };
   }
@@ -199,6 +210,10 @@ export class Runner extends EventEmitter {
       mcpServers,
       mcpServersDelivery: 'initialize',
       canUseTool: (toolName, input, opts) => this.#canUseTool(toolName, input, opts),
+      hooks: {
+        // compaction summary → context file (the full history stays readable)
+        PostCompact: [{ hooks: [async (input) => { await this.appendContext('summary', `${input.trigger === 'auto' ? 'automatisch' : 'manuell'}:\n\n${input.compact_summary ?? ''}`); return {}; }] }],
+      },
       enableFileCheckpointing: true,
       perTaskStopAffordance: true,
       promptSuggestions: config.promptSuggestions || undefined,
@@ -232,6 +247,42 @@ export class Runner extends EventEmitter {
   async browserChanged() {
     this.emitStatus();
     if (this.relayToken) await this.ctx.relay.retarget(this.relayToken);
+  }
+
+  // ---------------------------------------------------------------- context files
+
+  /**
+   * Full conversation as Markdown in <project>/context/<date>-<session>.md: every prompt, every
+   * final answer and every compaction summary. Compaction shortens what Claude holds in its context –
+   * nothing is lost, Claude (and the user) can look it up there.
+   */
+  async appendContext(kind, text) {
+    if (!this.sessionId || !text) return;
+    try {
+      if (!this.stats.contextFile) {
+        this.stats.contextFile = `context/${new Date().toISOString().slice(0, 10)}-${this.sessionId.slice(0, 8)}.md`;
+        this.saveStats();
+      }
+      const file = path.join(this.project.dir, this.stats.contextFile);
+      await fsp.mkdir(path.dirname(file), { recursive: true });
+      const head = fs.existsSync(file) ? '' : `# Session ${this.sessionId}\n\nProjekt: ${this.project.name}\n\n`;
+      const time = new Date().toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+      const title = { user: 'Nutzer', claude: 'Claude', summary: 'Kontext zusammengefasst', limit: 'Cockpit' }[kind] ?? kind;
+      await fsp.appendFile(file, `${head}## ${time} · ${title}\n\n${String(text).trim()}\n\n`);
+    } catch (e) {
+      console.warn(`[context] ${this.projectId}: ${e.message}`);
+    }
+  }
+
+  /** After an answer: summarise early when the context is ≥ AUTO_COMPACT_PCT full (0 = only Claude Code's own). */
+  #maybeCompact(msg) {
+    const pct = this.project?.autoCompactPct ?? this.ctx.config.autoCompactPct;
+    const c = this.stats?.context;
+    const max = c?.window || c?.max;
+    if (!pct || !max || !c.tokens || msg.local_command || this.compacting || this.queue == null) return;
+    if (c.tokens / max * 100 < pct) return;
+    this.#log('cockpit', 'context_saved', { text: `Kontext zu ${Math.round(c.tokens / max * 100)} % voll – wird zusammengefasst; der vollständige Verlauf steht in ${this.stats.contextFile ?? 'context/'}` });
+    this.send(`/compact Behalte Ziel, offene Aufgaben, getroffene Entscheidungen, wichtige Dateipfade und Zugangswege. Der vollständige Verlauf steht in ${this.stats.contextFile ?? 'context/'}.`, { source: 'auto-compact' }).catch(() => {});
   }
 
   /** Resolves when the current turn is over (or right away when idle); returns the last result. */
@@ -317,6 +368,7 @@ export class Runner extends EventEmitter {
     this.pending.clear();
     this.bgTasks = [];
     this.turn = null;
+    clearInterval(this.limitTimer);
     this.compacting = false;
     this.stream = { text: '', thinking: '', out: 0 };
     this.ctx.hub.toProject(this.projectId, { t: 'live', projectId: this.projectId, k: 'stream_reset' });
@@ -385,6 +437,7 @@ export class Runner extends EventEmitter {
     if (!prompt.startsWith('/')) {
       this.lastPrompt = prompt;
       this.ctx.meta?.onPrompt(this.projectId, this.sessionId, prompt); // titles via Haiku, in the background
+      this.appendContext('user', prompt);
     }
     this.#log('cockpit', 'user_prompt', { text: prompt, uuid: id, queued: busy, source: opts.source ?? null });
     this.saveStats();
@@ -392,9 +445,46 @@ export class Runner extends EventEmitter {
   }
 
   #beginTurn() {
-    this.turn = { startedAt: Date.now(), calls: 0, ctxStart: this.stats?.context?.tokens ?? 0, costStart: this.proc?.totalCost ?? 0 };
+    this.turn = { startedAt: Date.now(), calls: 0, ctxStart: this.stats?.context?.tokens ?? 0, costStart: this.proc?.totalCost ?? 0, estCost: 0 };
     this.stream.out = 0;
     this.setState('running');
+    clearInterval(this.limitTimer);
+    this.limitTimer = setInterval(() => this.#checkLimits(), 2000);
+    this.limitTimer.unref?.();
+  }
+
+  /**
+   * Per-answer limits of the project (cost, share of the 5-h limit, time, tool calls): the running
+   * answer is interrupted as soon as one is exceeded. Cost is estimated live from token usage and
+   * model prices (the exact figure only arrives with the result).
+   */
+  #checkLimits() {
+    const t = this.turn;
+    const lim = this.project?.turnLimits;
+    if (!t || !lim || this.limitHit) return;
+    const pctPerUsd = this.ctx.limits.forecast?.()?.pctPerUsd5h ?? null;
+    const minutes = (Date.now() - t.startedAt) / 60_000;
+    const checks = [
+      [lim.costUsd > 0 && t.estCost >= lim.costUsd, `Kosten ≈ ${t.estCost.toFixed(2)} $ (Limit ${lim.costUsd} $)`],
+      [lim.usagePct > 0 && pctPerUsd != null && t.estCost * pctPerUsd >= lim.usagePct, `≈ ${(t.estCost * (pctPerUsd ?? 0)).toFixed(1)} % des 5-h-Limits (Limit ${lim.usagePct} %)`],
+      [lim.minutes > 0 && minutes >= lim.minutes, `Laufzeit ${Math.floor(minutes)} min (Limit ${lim.minutes} min)`],
+      [lim.calls > 0 && t.calls >= lim.calls, `${t.calls} Schritte (Limit ${lim.calls})`],
+    ];
+    const hit = checks.find(([over]) => over);
+    if (!hit) return;
+    this.limitHit = true;
+    this.#log('cockpit', 'limit', { text: `Limit erreicht: ${hit[1]} – Antwort abgebrochen` });
+    this.appendContext('limit', `Limit erreicht: ${hit[1]} – Antwort abgebrochen`);
+    this.interrupt().catch(() => {}).finally(() => { this.limitHit = false; });
+  }
+
+  /** Token usage of one API call → estimated USD (cache reads 0.1×, cache writes 1.25× input price). */
+  #estimateCost(model, usage, outDelta, first) {
+    const price = this.ctx.catalog?.prices?.[model];
+    if (!price) return 0;
+    let c = (outDelta * price.out) / 1e6;
+    if (first) c += ((usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) * 0.1 + (usage.cache_creation_input_tokens ?? 0) * 1.25) * price.in / 1e6;
+    return c;
   }
 
   async interrupt() {
@@ -486,9 +576,44 @@ export class Runner extends EventEmitter {
     });
   }
 
+  /**
+   * Access to a resource this project has not been granted yet (another project's database or session,
+   * a browser identity …): asks the user in the cockpit – in EVERY permission mode, also auto and
+   * bypass, because the check runs inside the cockpit tool itself, not in Claude Code's permission logic.
+   * "Immer erlauben" stores the grant in the project (project.grants). Resolves true/false.
+   */
+  async requestAccess(resource, { title, description }) {
+    const p = await this.ctx.projects.get(this.projectId);
+    if ((p.grants ?? []).includes(resource)) return true;
+    return new Promise((resolve) => {
+      const id = uuid();
+      const req = {
+        id, toolName: 'Zugriff', input: { resource }, title, description, displayName: 'Zugriff', decisionReason: null, blockedPath: null,
+        toolUseId: null, agentId: null, mcpServer: null, canAlways: true, defaultToNo: false, access: true, ts: Date.now(),
+      };
+      this.pending.set(id, { req, input: { resource }, suggestions: [], access: true, resolve: (r) => resolve(r.behavior === 'allow') });
+      if (this.state === 'running') this.setState('waiting');
+      this.emitStatus();
+      this.ctx.hub.toAll({ t: 'notify', projectId: this.projectId, text: title });
+    });
+  }
+
   respond(id, decision = {}) {
     const entry = this.pending.get(id);
     if (!entry) throw new UserError('Diese Anfrage ist nicht mehr offen');
+    if (entry.access) {
+      // cockpit resource access (requestAccess)
+      const allow = decision.decision === 'allow' || decision.decision === 'always';
+      if (decision.decision === 'always') {
+        this.ctx.projects.get(this.projectId).then((p) => this.ctx.projects.touch(this.projectId, { grants: [...new Set([...(p.grants ?? []), entry.input.resource])] })).catch(() => {});
+      }
+      this.pending.delete(id);
+      entry.resolve({ behavior: allow ? 'allow' : 'deny' });
+      this.#log('cockpit', 'permission_decision', { id, toolName: `Zugriff ${entry.input.resource}`, decision: decision.decision, message: null });
+      if (!this.pending.size && this.state === 'waiting') this.setState('running');
+      this.emitStatus();
+      return;
+    }
     const { req, input, suggestions } = entry;
     let result;
     const updatedInput = decision.updatedInput && typeof decision.updatedInput === 'object' && !Array.isArray(decision.updatedInput)
@@ -678,8 +803,10 @@ export class Runner extends EventEmitter {
     this.stats.lastApiAt = now;
     const u = m.usage ?? {};
     let rec = this.seen.get(m.id);
+    let first = false;
     if (!rec) {
       rec = { out: 0 };
+      first = true;
       this.seen.set(m.id, rec);
       if (this.seen.size > 4000) this.seen.delete(this.seen.keys().next().value);
       if (!this.turn) this.#beginTurn();
@@ -687,10 +814,13 @@ export class Runner extends EventEmitter {
       this.stats.apiCalls++;
     }
     const out = u.output_tokens ?? 0;
+    const outDelta = Math.max(0, out - rec.out);
     if (out > rec.out) {
       this.stats.outTokens += out - rec.out;
       rec.out = out;
     }
+    if (this.turn) this.turn.estCost += this.#estimateCost(m.model, u, outDelta, first);
+    this.#checkLimits();
     const topLevel = !msg.parent_tool_use_id && !msg.agent_id;
     if (topLevel) {
       const ctxTokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + out;
@@ -733,8 +863,11 @@ export class Runner extends EventEmitter {
     msg._cockpit = { costDelta: delta, calls: turn.calls };
     // final answer of the turn – read by parent sessions (session_status / session_wait)
     this.lastResult = { text: String(msg.result ?? '').slice(0, 20_000), isError: !!msg.is_error, at: Date.now(), costUsd: delta };
+    if (!msg.local_command && msg.result) this.appendContext('claude', msg.result);
+    setImmediate(() => this.#maybeCompact(msg));
     this.ctx.limits.addCost(delta);
     this.turn = null;
+    clearInterval(this.limitTimer);
     this.stream.out = 0;
     this.saveStats();
     this.setState(this.pending.size ? 'waiting' : 'ready');

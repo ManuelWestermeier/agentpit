@@ -168,6 +168,9 @@ export const useStore = create<State>()((set, get) => {
       case 'schedules':
         set({ schedules: msg.schedules ?? [] });
         return;
+      case 'env':
+        if (s.hello) set({ hello: { ...s.hello, env: msg.env, installs: msg.installs } });
+        return;
       case 'github':
         set({ github: msg.github });
         if (msg.github?.login?.state === 'done' && s.github?.login?.state === 'running') get().toast('info', 'Mit GitHub verbunden.');

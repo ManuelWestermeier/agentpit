@@ -44,7 +44,9 @@
 .account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .hint { font-size: var(--t-xs); color: var(--text-2); background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; }
 .hint code { display: block; margin-top: 3px; color: var(--text); user-select: all; word-break: break-all; }
-.hint { position: relative; padding-right: 22px; }
+.hint { position: relative; padding-right: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.hint code { flex-basis: 100%; }
+.hint-btn { margin-left: auto; }
 .hint-x { position: absolute; top: 4px; right: 4px; border: 0; background: none; color: var(--text-3); cursor: pointer; padding: 2px; display: grid; place-items: center; }
 .hint-x:hover { color: var(--text); }
 

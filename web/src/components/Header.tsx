@@ -5,7 +5,7 @@ import { useActive, useNow } from '../lib/hooks';
 import { useStore, type Tab } from '../lib/store';
 import { ProjectSettings } from './ProjectSettings';
 
-const TABS: [Tab, string][] = [['session', 'Session'], ['browser', 'Browser'], ['files', 'Dateien'], ['git', 'Git'], ['services', 'Dienste'], ['data', 'Daten']];
+const TABS: [Tab, string][] = [['session', 'Session'], ['browser', 'Browser'], ['files', 'Dateien'], ['git', 'Git'], ['services', 'Microservices'], ['data', 'Daten']];
 
 export function Header({ onToggleSide }: { onToggleSide: () => void }) {
   const { project, runner } = useActive();

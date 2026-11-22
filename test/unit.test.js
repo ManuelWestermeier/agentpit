@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Files } from '../server/files.js';
 import { Limits } from '../server/limits.js';
+import { chartFromRows, renderChart } from '../server/charts.js';
 import { Janitor, trashTime } from '../server/janitor.js';
 import { Media } from '../server/media.js';
 import { Meta } from '../server/meta.js';
@@ -251,6 +252,26 @@ test('Meta: Haiku names project and session, writes META.md, keeps a name the us
   const final = await projects.get(p.id);
   assert.equal(final.name, 'Mein Name');
   assert.equal(final.description, 'Neue Beschreibung.');
+});
+
+test('charts: self-contained SVG page, palette order, legend/labels, limits, SQL mapping', () => {
+  const html = renderChart({ title: 'Umsatz <Test>', type: 'bar', labels: ['Jan', 'Feb'], series: [{ name: 'Shop', values: [1200, 1500] }, { name: 'B2B', values: [300, null] }] });
+  assert.match(html, /^<!doctype html>/);
+  assert.ok(!/<script|https?:\/\/(?!www\.w3)/.test(html), 'no scripts, no external resources');
+  assert.match(html, /Umsatz &lt;Test&gt;/, 'escaped');
+  assert.match(html, /--s0:#2a78d6;--s1:#eb6834/, 'validated categorical order, light');
+  assert.match(html, /--s0:#3987e5;--s1:#d95926/, 'selected dark steps');
+  assert.match(html, /class="legend"/, 'legend for ≥ 2 series');
+  assert.match(html, /<title>Shop · Feb: 1\.500<\/title>/, 'hover value, German number format');
+  assert.match(html, /<summary>Tabelle<\/summary>/);
+  const single = renderChart({ type: 'line', labels: ['a', 'b', 'c'], series: [{ name: 'Nur', values: [1, 2, 3] }] });
+  assert.ok(!/class="legend"/.test(single), 'single series: no legend box');
+  assert.throws(() => renderChart({ type: 'scatter', labels: ['1', '2'], series: [1, 2, 3, 4].map((i) => ({ name: `s${i}`, values: [1, 2] })) }), /höchstens 3 Reihen/);
+  assert.throws(() => renderChart({ type: 'bar', labels: ['a'], series: [{ name: 'x', values: ['abc'] }] }), /keine Zahlen/);
+  const spec = chartFromRows({ columns: ['monat', 'umsatz', 'kosten'], rows: [['Jan', 10, 4], ['Feb', 12, 5]] }, { x: 'monat', type: 'line', title: 't' });
+  assert.deepEqual(spec.series.map((s) => s.name), ['umsatz', 'kosten']);
+  assert.deepEqual(spec.labels, ['Jan', 'Feb']);
+  assert.throws(() => chartFromRows({ columns: ['a'], rows: [] }, { x: 'b' }), /nicht im Ergebnis/);
 });
 
 test('AsyncQueue delivers in order and ends on close', async () => {

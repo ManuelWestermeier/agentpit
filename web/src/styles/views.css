@@ -69,6 +69,19 @@
 .install-box { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 520px; text-align: center; }
 .install-box .login-out { width: 100%; text-align: left; }
 
+/* ---- permanent grants (project settings) */
+.grants { list-style: none; margin: 4px 0 0; padding: 0; }
+.grants li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: var(--t-s); }
+
+/* ---- per-answer limits */
+.limits { position: relative; display: inline-flex; }
+.limits-btn { padding-right: 8px; cursor: pointer; color: var(--text-2); background-image: none; }
+.limits-btn.on { color: var(--amber); border-color: var(--amber); }
+.limits-pop { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20; width: 240px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 6px; font-size: var(--t-s); }
+.limits-row { display: grid; grid-template-columns: 1fr 90px 28px; align-items: center; gap: 6px; }
+.limits-row .input { height: 26px; padding: 0 6px; }
+.limits-actions { display: flex; justify-content: space-between; margin-top: 4px; }
+
 /* ---- sub-sessions in the project list */
 .proj-sub { color: var(--text-3); }
 

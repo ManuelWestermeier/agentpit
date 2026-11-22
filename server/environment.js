@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { installPlan } from './installer.js';
 
 const require = createRequire(import.meta.url);
 
@@ -93,10 +94,13 @@ export async function loadPty() {
   }
 }
 
+const hint = (key, text, why, cmd) => ({ key, text, why, cmd, install: !!installPlan(key) });
+
 export async function checkEnvironment({ config, root }) {
-  const [ffmpeg, git] = await Promise.all([
+  const [ffmpeg, git, gh] = await Promise.all([
     run('ffmpeg', ['-hide_banner', '-version']),
     run('git', ['--version']),
+    run('gh', ['--version']),
   ]);
   const browsers = detectBrowsers();
   const bundled = findBrowserExecutable('chromium');
@@ -113,12 +117,12 @@ export async function checkEnvironment({ config, root }) {
     browser: { channel, chrome: !!browsers.chrome, msedge: !!browsers.msedge, bundled },
     playwrightMcp: !!playwrightMcpCli(root),
     pty: !!pty,
+    // short text + one-click install where possible (server/installer.js); cmd only where it has to be typed (sudo)
     hints: [
-      !ffmpeg && (process.platform === 'win32'
-        ? { key: 'ffmpeg', text: 'ffmpeg fehlt – für Videos nötig.', cmd: 'winget install --id Gyan.FFmpeg -e' }
-        : { key: 'ffmpeg', text: 'ffmpeg fehlt – für Videos nötig.', cmd: process.platform === 'darwin' ? 'brew install ffmpeg' : 'sudo apt install ffmpeg' }),
-      !git && process.platform === 'win32' && { key: 'git', text: 'Git for Windows fehlt – Claude Code nutzt dessen Bash.', cmd: 'winget install --id Git.Git -e' },
-      !channel && !bundled && { key: 'browser', text: 'Kein Browser gefunden – im Browser-Bereich „Browser installieren“ (lädt Chromium).', cmd: 'npm run install:browser' },
+      !ffmpeg && hint('ffmpeg', 'ffmpeg fehlt', 'für Videos', process.platform === 'darwin' ? 'brew install ffmpeg' : process.platform === 'win32' ? 'winget install --id Gyan.FFmpeg -e' : 'sudo apt install ffmpeg'),
+      !git && process.platform === 'win32' && hint('git', 'Git fehlt', 'Claude Code braucht dessen Bash', 'winget install --id Git.Git -e'),
+      !gh && hint('gh', 'GitHub CLI fehlt', 'für den GitHub-Login', process.platform === 'darwin' ? 'brew install gh' : process.platform === 'win32' ? 'winget install GitHub.cli' : 'https://cli.github.com'),
+      !channel && !bundled && { key: 'browser', text: 'Kein Browser', why: 'für Browser-Identitäten', install: true, cmd: 'npm run install:browser' },
     ].filter(Boolean),
   };
 }
