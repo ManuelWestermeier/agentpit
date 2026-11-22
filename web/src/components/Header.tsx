@@ -23,7 +23,7 @@ export function Header({ onToggleSide }: { onToggleSide: () => void }) {
         <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Menü"><Menu size={16} /></button>
         <div className="header-title">
           <h1>{profile?.name ?? 'Browser'}</h1>
-          <div className="header-sub">Browser-Identität · eigenes Profil mit Cookies, Logins und Speicher{profile?.proxy ? ' · Proxy' : ''}</div>
+          {profile?.proxy && <div className="header-sub">über Proxy</div>}
         </div>
         <UsagePill />
       </header>
@@ -39,19 +39,24 @@ export function Header({ onToggleSide }: { onToggleSide: () => void }) {
   }
 
   const st = runner?.pending?.length ? 'waiting' : runner?.state ?? 'idle';
-  const sessionTitle = sessions?.find((s) => s.sessionId === view?.sessionId)?.title ?? (view?.sessionId ? 'Session' : 'Neue Session');
+  // state only when something is going on – idle/ready is the normal case and says nothing
+  const showState = st === 'running' || st === 'waiting' || st === 'starting' || st === 'error';
+  const sessionTitle = sessions?.find((s) => s.sessionId === view?.sessionId)?.title;
+  const sub = showState || runner?.compacting || sessionTitle;
   return (
     <header className="header has-tabs">
       <div className="header-row">
         <button className="btn ghost icon only-mobile" onClick={onToggleSide} aria-label="Menü"><Menu size={16} /></button>
         <div className="header-title">
           <h1 title={project.dir}>{project.name}</h1>
-          <div className="header-sub">
-            <span className="state-pill"><span className={`tally ${runner?.live || st === 'error' ? st : ''}`} />{runner?.live ? STATE_LABEL[st] : 'bereit'}</span>
-            {runner?.turn && <span className="tab-nums">{fmtDuration(now - runner.turn.startedAt)} · {runner.turn.calls} Calls</span>}
-            {runner?.compacting && <span style={{ color: 'var(--blue)' }}>komprimiert …</span>}
-            <span className="ellipsis" title={view?.sessionId ?? ''}>{sessionTitle}</span>
-          </div>
+          {sub && (
+            <div className="header-sub">
+              {showState && <span className="state-pill"><span className={`tally ${st}`} />{STATE_LABEL[st]}</span>}
+              {runner?.turn && <span className="tab-nums">{fmtDuration(now - runner.turn.startedAt)}</span>}
+              {runner?.compacting && <span style={{ color: 'var(--blue)' }}>komprimiert …</span>}
+              {sessionTitle && <span className="ellipsis" title={view?.sessionId ?? ''}>{sessionTitle}</span>}
+            </div>
+          )}
         </div>
         <UsagePill />
         <button className="btn ghost icon" title="Projekteinstellungen" onClick={() => setSettings(true)}><Settings2 size={16} /></button>

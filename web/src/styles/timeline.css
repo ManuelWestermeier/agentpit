@@ -52,7 +52,7 @@
 .tool-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; user-select: none; min-height: 32px; }
 .tool-head:hover { background: var(--raised); }
 .tool-icon { color: var(--text-3); flex: none; display: inline-flex; }
-.tool-name { font: 500 var(--t-xs)/1 var(--cond); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); flex: none; }
+.tool-name { font-size: var(--t-xs); line-height: 1; color: var(--text-3); flex: none; }
 .tool-summary { font: 400 var(--t-s)/1.4 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .tool-summary.cmd::before { content: '$ '; color: var(--amber); }
 .tool-desc { font-size: var(--t-xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }

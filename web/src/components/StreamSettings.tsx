@@ -21,7 +21,7 @@ export function StreamControls({ value, onChange, idPrefix }: { value: StreamSet
         <button type="button" role="radio" aria-checked={!manual} className={!manual ? 'on' : ''} onClick={() => set({ mode: 'auto' })}>Auto</button>
         <button type="button" role="radio" aria-checked={manual} className={manual ? 'on' : ''} onClick={() => set({ mode: 'manual' })}>Manuell</button>
       </div>
-      {!manual && <p className="stream-hint">Qualität, Auflösung und Bildrate passen sich laufend an deine Internetgeschwindigkeit an: Ruckelt es, wird reduziert, ist die Leitung frei, wird wieder hochgeregelt.</p>}
+      {!manual && <p className="stream-hint">Qualität, Auflösung und Bildrate folgen der Verbindung.</p>}
       {manual && (
         <>
           <div className="stream-presets">
@@ -60,7 +60,7 @@ export function StreamControls({ value, onChange, idPrefix }: { value: StreamSet
 
 /** Live numbers of the running stream. */
 export function StreamStatsView({ stats }: { stats: StreamStats | null }) {
-  if (!stats) return <p className="stream-hint">Noch keine Messwerte … (kommen alle 1,5 s, solange sich das Bild bewegt)</p>;
+  if (!stats) return <p className="stream-hint">Noch keine Messwerte</p>;
   const pct = stats.levels > 1 ? Math.round(((stats.levels - 1 - stats.level) / (stats.levels - 1)) * 100) : 100;
   return (
     <div className="stream-stats">

@@ -45,7 +45,7 @@ export function PreviewPanel() {
   // Text files follow changes on disk; media keeps playing until "neu laden"
   useEffect(() => { if (kind === 'text' || kind === 'md') setBust((b) => b + 1); }, [version, kind]);
 
-  if (!preview || !projectId) return <div className="empty">Datei links in „Dateien“ auswählen.</div>;
+  if (!preview || !projectId) return <div className="empty" />;
   return (
     <div className="preview">
       <div className="preview-bar">

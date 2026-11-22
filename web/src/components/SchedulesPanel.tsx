@@ -41,7 +41,6 @@ export function SchedulesPanel({ projectId }: { projectId: string }) {
           </div>
         </div>
       ))}
-      {!list.length && <div className="faint small-text" style={{ padding: '6px 14px 10px' }}>Keine Zeitpläne. Lege einen an – oder bitte Claude darum, z. B. „schick mir jeden Werktag um 9 Uhr eine Zusammenfassung“.</div>}
       {open && <ScheduleDialog projectId={projectId} onClose={() => setOpen(false)} />}
     </div>
   );

@@ -9,15 +9,11 @@ import { ToolCard } from './ToolCard';
 
 const DECISION: Record<string, string> = { allow: 'erlaubt', always: 'dauerhaft erlaubt', deny: 'abgelehnt' };
 
-export const ItemRow = memo(function ItemRow({ item, prev }: { item: Item; v: number; prev?: Item }) {
-  const gutterTime = item.kind === 'user' || item.kind === 'turn' || (item.kind === 'assistant' && prev?.kind === 'user');
-  const who = item.kind === 'user' ? 'Du' : item.kind === 'assistant' && prev?.kind === 'user' ? 'Claude' : null;
+export const ItemRow = memo(function ItemRow({ item }: { item: Item; v: number; prev?: Item }) {
+  const gutterTime = item.kind === 'user';
   return (
     <div className={`row row--${item.kind}`}>
-      <div className="gutter">
-        {gutterTime && fmtClock(item.ts)}
-        {who && <span className="who">{who}</span>}
-      </div>
+      <div className="gutter">{gutterTime && fmtClock(item.ts)}</div>
       <div className="cell"><ItemBody item={item} /></div>
     </div>
   );
@@ -34,8 +30,8 @@ export function ItemBody({ item }: { item: Item }) {
     case 'turn':
       return (
         <div className={`turn${item.ok ? '' : ' fail'}`}>
-          <b>{item.ok ? 'Fertig' : item.subtype === 'error_max_turns' ? 'Turn-Limit erreicht' : item.subtype === 'error_max_budget_usd' ? 'Budget erreicht' : 'Abgebrochen'}</b>
-          <span className="tab-nums">{fmtDuration(item.ms)}{item.calls ? ` · ${item.calls} Calls` : ''}{item.cost ? ` · ${fmtUsd(item.cost)}` : ''}</span>
+          {!item.ok && <b>{item.subtype === 'error_max_turns' ? 'Turn-Limit erreicht' : item.subtype === 'error_max_budget_usd' ? 'Budget erreicht' : 'Abgebrochen'}</b>}
+          <span className="tab-nums">{fmtDuration(item.ms)}{item.cost ? ` · ${fmtUsd(item.cost)}` : ''}</span>
           {item.errors?.length ? <span className="err">{item.errors.join('; ').slice(0, 200)}</span> : null}
         </div>
       );
@@ -49,14 +45,12 @@ export function ItemBody({ item }: { item: Item }) {
           {item.answers ? ` – ${Object.values(item.answers).join(' · ')}` : ''}
         </div>
       );
-    case 'init':
-      return (
-        <div className="init">
-          <span><b>{shortModel(item.model)}</b></span>
-          <span>{item.tools} Tools</span>
-          {item.mcp.map((m) => <span key={m.name}>MCP {m.name}: <b className={m.status === 'connected' ? 'ok' : 'err'}>{m.status === 'connected' ? 'verbunden' : m.status}</b></span>)}
-        </div>
-      );
+    case 'init': {
+      // model and tool count are visible elsewhere; only a tool server that failed to connect matters here
+      const broken = item.mcp.filter((m) => m.status !== 'connected');
+      if (!broken.length) return null;
+      return <div className="note warn">{broken.map((m) => `${m.name}: ${m.status}`).join(' · ')} – diese Werkzeuge fehlen in der Session ({shortModel(item.model)})</div>;
+    }
     default:
       return null;
   }
@@ -93,10 +87,10 @@ function UserPrompt({ text, uuid, queued }: { text: string; uuid?: string; queue
 
 function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  if (!text.trim()) return <div className="thinking faint">denkt nach (verborgen)</div>;
+  if (!text.trim()) return null;
   return (
     <details className="thinking" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary>Gedankengang · {fmtTokens(Math.round(text.length / 3.6))} Tokens</summary>
+      <summary>Gedankengang</summary>
       {open && <pre>{text}</pre>}
     </details>
   );

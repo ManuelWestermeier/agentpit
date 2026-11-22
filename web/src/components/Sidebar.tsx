@@ -1,5 +1,7 @@
-import { GitFork, Globe, Plus, Settings, SquarePen } from 'lucide-react';
+import { GitFork, Globe, Plus, Settings, SquarePen, X } from 'lucide-react';
 import { useState } from 'react';
+
+const HINTS_KEY = 'cockpit.hiddenHints';
 import { STATE_LABEL, fmtAgo, fmtUsd } from '../lib/format';
 import { useNow } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
@@ -53,12 +55,13 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
 
 function ProjectRow({ project, runner, active, onClick }: { project: Project; runner?: RunnerStatus; active: boolean; onClick: () => void }) {
   const st = stateOf(runner);
+  const busy = st === 'running' || st === 'waiting' || st === 'starting' || st === 'error';
   const meta = runner?.pending?.length ? `${runner.pending.length} Freigabe${runner.pending.length > 1 ? 'n' : ''} offen`
-    : runner?.live ? STATE_LABEL[runner.state] : fmtAgo(project.updatedAt);
+    : busy ? STATE_LABEL[st] : fmtAgo(project.updatedAt);
   return (
     <button className={`proj${active ? ' active' : ''}${project.parentId ? ' proj--sub' : ''}`} onClick={onClick}
       title={project.parentId ? `${project.dir}\nSub-Session, gestartet von „${project.parentId}“` : project.dir}>
-      <span className={`tally ${runner?.live || st === 'error' ? st : ''}`} aria-label={STATE_LABEL[st]} />
+      <span className={`tally ${busy ? st : 'none'}`} aria-label={busy ? STATE_LABEL[st] : undefined} />
       <span className="proj-name">{project.parentId && <span className="proj-sub" aria-label="Sub-Session">↳ </span>}{project.name}</span>
       <span className={`proj-meta${st === 'waiting' ? ' waiting' : ''}`}>{meta}</span>
     </button>
@@ -123,9 +126,9 @@ function Profiles({ onNavigate }: { onNavigate: () => void }) {
         {(browsers?.profiles ?? []).map((p) => (
           <div key={p.id} className="sess-wrap">
             <button className={`proj${profileView === p.id ? ' active' : ''}`} onClick={() => { useStore.setState({ profileView: p.id }); onNavigate(); }}>
-              <span className={`tally ${p.running ? 'ready' : ''}`} style={p.running ? { background: p.color, boxShadow: 'none' } : undefined} />
+              <span className={`tally ${p.running ? 'ready' : 'none'}`} style={p.running ? { background: p.color, boxShadow: 'none' } : undefined} />
               <span className="proj-name">{p.name}</span>
-              <span className="proj-meta">{p.running ? (p.title || p.url || 'läuft') : `${p.engine === 'chromium' ? 'Chromium' : p.engine === 'chrome' ? 'Chrome' : 'Edge'}${p.temporary ? ' · temporär' : ''}`}</span>
+              {(p.running ? p.title || p.url : p.temporary) && <span className="proj-meta">{p.running ? p.title || p.url : 'temporär'}</span>}
             </button>
             <button className="btn ghost icon small sess-fork" title="Profil bearbeiten" onClick={() => setEdit(p.id)}><Settings size={12} /></button>
           </div>
@@ -144,17 +147,28 @@ function SideFoot() {
   const hello = useStore((s) => s.hello)!;
   const claudeOk = auth?.status?.loggedIn || auth?.status?.envApiKey || auth?.status?.envOAuthToken;
   const plan = catalog?.account?.subscriptionType;
+  const [hidden, setHidden] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(HINTS_KEY) ?? '[]'); } catch { return []; } });
+  const hide = (key: string) => {
+    const next = [...hidden, key];
+    setHidden(next);
+    try { localStorage.setItem(HINTS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  };
   return (
     <div className="side-foot">
       <button className="acct" onClick={() => useStore.setState({ loginOpen: true })} title="Konten verwalten">
-        <span className={`tally ${claudeOk ? 'ready' : 'error'}`} />
+        <span className={`tally ${claudeOk ? 'none' : 'error'}`} />
         <span className="acct-name">Claude{claudeOk ? (plan ? ` · ${plan}` : '') : ' – anmelden'}</span>
       </button>
       <button className="acct" onClick={() => useStore.setState({ loginOpen: true })} title="Konten verwalten">
-        <span className={`tally ${github?.status?.loggedIn ? 'ready' : ''}`} />
+        <span className="tally none" />
         <span className="acct-name">GitHub{github?.status?.loggedIn ? ` · ${github.status.login}` : github?.status?.installed === false ? ' – gh fehlt' : ' – verbinden'}</span>
       </button>
-      {hello.env.hints.map((h) => <div className="hint" key={h.key}>{h.text}<code>{h.cmd}</code></div>)}
+      {hello.env.hints.filter((h) => !hidden.includes(h.key)).map((h) => (
+        <div className="hint" key={h.key}>
+          <button className="hint-x" onClick={() => hide(h.key)} aria-label="Hinweis ausblenden" title="Ausblenden"><X size={11} /></button>
+          {h.text}<code>{h.cmd}</code>
+        </div>
+      ))}
       {hello.config.hasPassword && <a className="acct acct-link" href="/logout">Abmelden</a>}
     </div>
   );

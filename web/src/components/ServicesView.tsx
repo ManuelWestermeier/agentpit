@@ -62,14 +62,13 @@ export default function ServicesView() {
             </div>
           </div>
         ))}
-        {!list.length && <div className="faint small-text" style={{ padding: '8px 14px' }}>Noch keine Dienste. Lege z. B. „Dev-Server · npm run dev“ an – oder bitte Claude, einen einzurichten.</div>}
         {terminals && <button className={`svc-term${sel === '__term' ? ' on' : ''}`} onClick={() => setSel('__term')}><SquareTerminal size={13} /> Terminal</button>}
         <SchedulesPanel projectId={pid} />
         <HookInfo projectId={pid} />
       </div>
       <div className="svc-right">
         {sel === '__term' ? <Suspense fallback={null}><TerminalPanel key={pid} /></Suspense>
-          : current ? <Logs projectId={pid} service={current} /> : <div className="empty">Dienst wählen, um Logs zu sehen.</div>}
+          : current ? <Logs projectId={pid} service={current} /> : <div className="empty" />}
       </div>
       {edit && <ServiceDialog projectId={pid} service={edit} onClose={() => setEdit(null)} />}
     </div>

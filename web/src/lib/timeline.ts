@@ -142,14 +142,12 @@ export class Timeline {
         this.push({ kind: 'perm', id: this.nid('p'), v: 0, ts, toolName: ev.toolName, decision: ev.decision, message: ev.message, answers: ev.answers });
         return;
       case 'runner_started':
-        this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim',
-          text: ev.forkedFrom ? 'Claude Code gestartet – abgezweigt' : ev.resumed ? 'Claude Code gestartet – Session fortgesetzt' : 'Claude Code gestartet' });
+        // process start/resume is routine – only a fork changes what the history means
+        if (ev.forkedFrom) this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: 'Abgezweigt aus einer früheren Session' });
         return;
-      case 'runner_stopped': {
-        const why: Record<string, string> = { idle: 'Leerlauf', user: 'beendet', switch: 'Sessionwechsel', shutdown: 'Server beendet', exit: 'Prozess beendet', removed: 'Projekt entfernt' };
-        this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: `Prozess gestoppt (${why[ev.reason] ?? ev.reason}) – der nächste Prompt setzt die Session fort` });
+      case 'runner_stopped':
+        // idle timeout, switching sessions, restarts: routine, the next prompt continues seamlessly
         return;
-      }
       case 'error':
         this.push({ kind: 'note', id: this.nid('e'), v: 0, ts, level: 'error', text: 'Claude Code ist abgestürzt', detail: ev.text });
         return;

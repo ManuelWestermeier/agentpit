@@ -1,17 +1,10 @@
 import { CornerDownLeft, Paperclip, Square } from 'lucide-react';
 import { useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { estimate } from '../lib/forecast';
-import { MODE_LABEL, fmtCountdown, fmtPct, fmtTokens, fmtUsd, shortModel } from '../lib/format';
+import { MODE_LABEL, fmtPct, fmtUsd, shortModel } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
-
-const QUICK: { cmd: string; title: string }[] = [
-  { cmd: '/compact', title: 'Verlauf zusammenfassen – macht Kontext frei, senkt Kosten pro Turn' },
-  { cmd: '/context', title: 'Wofür der Kontext gerade verbraucht wird' },
-  { cmd: '/usage', title: 'Kosten der Session und Plan-Limits als Text' },
-  { cmd: '/init', title: 'CLAUDE.md für dieses Projekt erzeugen oder aktualisieren' },
-];
 
 async function upload(projectId: string, file: File) {
   const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/upload?name=${encodeURIComponent(file.name || 'einfuegen.png')}`, {
@@ -118,11 +111,7 @@ export function Composer() {
         <div className="suggest"><span className="faint">Vorschlag</span><button className="btn ghost small" onClick={() => setText(runner.suggestion!)}>{runner.suggestion}</button></div>
       )}
       <div className="cmdbar" role="toolbar" aria-label="Befehle">
-        {QUICK.map((q) => (
-          <button key={q.cmd} className="cmd" title={q.title} disabled={readOnly || (!runner?.sessionId && q.cmd !== '/init')} onClick={() => send(q.cmd)}>{q.cmd}</button>
-        ))}
-        <button className="cmd" title="Neue Session – bei laufendem Prozess per /clear" disabled={readOnly} onClick={() => send('/clear')}>/clear</button>
-        <button className="cmd" title="Alle Befehle und Skills" onClick={() => { setText('/'); ta.current?.focus(); }}>Befehle …</button>
+        <button className="cmd" title="Alle Befehle und Skills (/compact, /context, /clear …) – oder „/“ tippen" onClick={() => { setText('/'); ta.current?.focus(); }}>Befehle …</button>
         <span className="sep" />
         <RunSettings />
         {busy && (
@@ -146,7 +135,7 @@ export function Composer() {
           ref={ta}
           value={text}
           disabled={readOnly}
-          placeholder={readOnly ? 'Nur Ansicht – oben „Diese fortsetzen“ wählen' : busy ? 'Nachricht einreihen – wird nach dem aktuellen Schritt verarbeitet (Esc bricht ab)' : 'Aufgabe für Claude … (Enter senden, Shift+Enter Zeile, / für Befehle)'}
+          placeholder={readOnly ? 'Nur Ansicht – oben „Diese fortsetzen“ wählen' : busy ? 'Nachricht einreihen' : 'Aufgabe für Claude'}
           rows={Math.min(12, Math.max(2, text.split('\n').length))}
           onChange={(e) => { setText(e.target.value); setSlashIdx(0); }}
           onKeyDown={onKey}
@@ -160,13 +149,12 @@ export function Composer() {
           </label>
           <div className="estimate" aria-live="off">
             {uploading > 0 && <span>lädt {uploading} Datei(en) …</span>}
-            {text && <span><b>{fmtTokens(est.draftTokens)}</b> Tokens</span>}
-            {est.single != null && <span title="Ein API-Call mit aktuellem Kontext (API-Gegenwert)">nächster Call ≈ <b>{fmtUsd(est.single)}</b></span>}
-            {est.typical != null && <span title="Median der bisherigen Turns, auf den aktuellen Kontext skaliert">Ø Turn ≈ <b>{fmtUsd(est.typical)}</b>{est.avgCalls ? ` (${Math.round(est.avgCalls)} Calls)` : ''}</span>}
-            {est.pctOf5h != null && <span title="Aus gemessenem Verbrauch pro Dollar in diesem 5-h-Fenster">≈ <b>+{fmtPct(est.pctOf5h, 1)}</b> 5-h-Limit</span>}
-            {est.ctxTokens > 0 && (est.warm
-              ? <span title={`Prompt-Cache (${est.ttl}) noch gültig – Kontext wird günstig gelesen`}>Cache warm <b className="tab-nums">{fmtCountdown(est.warmLeftMs)}</b></span>
-              : <span className="cold" title="Cache abgelaufen – der nächste Call schreibt den ganzen Kontext neu">Cache kalt{est.coldExtra ? ` +${fmtUsd(est.coldExtra)}` : ''}</span>)}
+            {/* only what changes a decision: the expected share of the 5-h limit, and a warning when the cache went cold
+                (details: usage panel, top right) */}
+            {est.pctOf5h != null && <span title="Geschätzt aus dem gemessenen Verbrauch in diesem 5-h-Fenster">≈ <b>+{fmtPct(est.pctOf5h, 1)}</b> 5-h-Limit</span>}
+            {est.ctxTokens > 0 && !est.warm && (
+              <span className="cold" title="Prompt-Cache abgelaufen – der nächste Schritt liest den ganzen Kontext neu ein">Cache kalt{est.coldExtra ? ` +${fmtUsd(est.coldExtra)}` : ''}</span>
+            )}
           </div>
           <button className="btn primary" disabled={!text.trim() || readOnly} onClick={() => send()} title="Senden (Enter)">
             {busy ? 'Einreihen' : 'Senden'} <CornerDownLeft size={13} />

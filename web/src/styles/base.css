@@ -111,6 +111,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .tally.waiting { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); animation: pulse 0.9s ease-in-out infinite; }
 .tally.ready { background: var(--green); }
 .tally.error { background: var(--red); }
+.tally.none { background: transparent; } /* idle: keeps the alignment, says nothing */
 @keyframes pulse { 50% { opacity: 0.45; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 0.9s linear infinite; }

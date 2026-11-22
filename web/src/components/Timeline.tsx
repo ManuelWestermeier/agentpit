@@ -1,6 +1,6 @@
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { fmtDuration, fmtTokens } from '../lib/format';
+import { fmtDuration } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { useStore, type Filter } from '../lib/store';
 import type { Item, ToolItem } from '../lib/timeline';
@@ -61,7 +61,7 @@ export function TimelineView({ extra }: { extra?: ReactNode } = {}) {
 
   return (
     <div className="timeline-wrap">
-      <Filters total={items.length} extra={extra} />
+      {(items.length > 0 || extra) && <Filters extra={extra} />}
       <div className="timeline" ref={ref} onScroll={onScroll}>
         {view.loading && <div className="note dim" style={{ paddingLeft: 'calc(var(--gutter) + 12px)' }}><Loader2 size={12} className="spin" /> Lade Verlauf …</div>}
         {(filtered.length > limit || view.truncated) && (
@@ -91,7 +91,7 @@ export function TimelineView({ extra }: { extra?: ReactNode } = {}) {
   );
 }
 
-function Filters({ total, extra }: { total: number; extra?: ReactNode }) {
+function Filters({ extra }: { extra?: ReactNode }) {
   const filter = useStore((s) => s.filter);
   const set = (f: Filter) => useStore.setState({ filter: f });
   const opts: [Filter, string][] = [['all', 'Alles'], ['chat', 'Nur Dialog'], ['commands', 'Befehle & Ausgaben']];
@@ -100,7 +100,7 @@ function Filters({ total, extra }: { total: number; extra?: ReactNode }) {
       {opts.map(([k, l]) => (
         <button key={k} className={`chip${filter === k ? ' active' : ''}`} onClick={() => set(k)} role="tab" aria-selected={filter === k}>{l}</button>
       ))}
-      <span className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-xs)' }}>{total} Einträge</span>
+      {extra && <span style={{ marginLeft: 'auto' }} />}
       {extra}
     </div>
   );
@@ -127,7 +127,7 @@ function Working() {
         <Loader2 size={13} className="spin" />
         <span className="tab-nums">
           {runner?.compacting ? 'komprimiert Kontext' : runner?.state === 'starting' ? 'startet Claude Code' : lastTool ? `${lastTool.name} läuft${progress ? ` seit ${Math.round(progress)} s` : ''}` : 'arbeitet'}
-          {t ? ` · ${fmtDuration(now - t.startedAt)} · ${t.calls} Calls${t.out ? ` · ${fmtTokens(t.out)} Tokens Ausgabe` : ''}` : ''}
+          {t ? ` · ${fmtDuration(now - t.startedAt)}` : ''}
         </span>
       </div>
     </div>
@@ -138,9 +138,7 @@ function EmptyState() {
   const { project } = useActive();
   return (
     <div className="empty">
-      <h2>{project?.name}</h2>
-      <p>Schreib unten eine Aufgabe. Claude arbeitet im Ordner <code>{project?.dir}</code> – Ergebnisse landen in <code>output/</code> (Tab „Dateien“), jede abgeschlossene Aufgabe wird als Git-Commit gesichert.</p>
-      <p className="faint">Beispiel: „Öffne example.com im Browser, nimm einen 20-Sekunden-Rundgang als Video auf und schneide ihn mit ffmpeg auf 1080p.“</p>
+      <p className="faint">Ergebnisse landen in <code title={project?.dir}>output/</code>.</p>
     </div>
   );
 }

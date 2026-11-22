@@ -27,17 +27,14 @@ export function ProjectBrowser() {
         <Link2 size={14} className="faint" />
         <span className="muted">Claude nutzt</span>
         <select className="select" value={project.browserProfile} onChange={(e) => link(e.target.value)} aria-label="Browser-Identität">
-          <option value="">eigenen, isolierten Browser (unsichtbar)</option>
+          <option value="">isolierten Browser ohne Logins</option>
           {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <button className="btn small" onClick={createAndLink}><Plus size={12} /> Neue Identität</button>
-        {runner?.live && <button className="btn small" onClick={() => act(() => conn.call('stop', { projectId: project.id }), 'Prozess beendet – nächster Prompt verbindet neu')}>Neu verbinden</button>}
       </div>
       {linked ? <BrowserView profileId={linked.id} /> : (
         <div className="empty">
-          <h2>Kein Browser verknüpft</h2>
-          <p>Ohne Verknüpfung startet Claude pro Session einen eigenen Browser ohne Logins, den du nicht siehst.
-            Verknüpfe eine Identität, um dich vorher selbst anzumelden (Google, Shops, Admin-Bereiche) und Claude live zuzusehen oder einzugreifen.</p>
+          <p className="faint">Mit einer Identität siehst du Claude live zu und meldest dich vorher selbst an.</p>
         </div>
       )}
     </div>
