@@ -1,7 +1,9 @@
-import { ArrowLeft, ArrowRight, Download, Keyboard, Loader2, Maximize, Plus, Power, RotateCw, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Download, Gauge, Keyboard, Loader2, Maximize, Plus, Power, RotateCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react';
 import { act, useStore } from '../lib/store';
+import type { StreamSettings, StreamStats } from '../lib/types';
 import { conn } from '../lib/ws';
+import { DEFAULT_STREAM, StreamControls, StreamStatsView } from './StreamSettings';
 
 interface Tab { i: number; url: string; title: string; active: boolean }
 interface Dialog { type: string; message: string; defaultValue: string }
@@ -26,6 +28,18 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
   const [dialogText, setDialogText] = useState('');
   const moveQueued = useRef<null | { x: number; y: number; buttons: number }>(null);
   const touch = useRef<{ x: number; y: number; lastY: number; lastX: number; drag: boolean } | null>(null);
+  const [stats, setStats] = useState<StreamStats | null>(null);
+  const [showStream, setShowStream] = useState(false);
+  const [streamDraft, setStreamDraft] = useState<StreamSettings | null>(null);
+  const streamTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const changeStream = (s: StreamSettings) => {
+    setStreamDraft(s);
+    clearTimeout(streamTimer.current);
+    // slider drags: send once the value settles
+    streamTimer.current = setTimeout(() => act(() => conn.call('browsers.stream', { id: profileId, stream: s })), 250);
+  };
+  const savedStream = JSON.stringify(profile?.stream ?? null);
+  useEffect(() => setStreamDraft(null), [savedStream]); // server confirmed → show the saved value
 
   const startedFor = useRef<string | null>(null);
   const [off, setOff] = useState(false);
@@ -49,8 +63,11 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
       if (m.profileId !== profileId) return;
       if (m.t === 'bframe') {
         frameSize.current = { w: m.w, h: m.h };
-        if (img.current) img.current.src = `data:image/jpeg;base64,${m.data}`;
+        if (img.current) img.current.src = `data:image/${m.fmt === 'png' ? 'png' : 'jpeg'};base64,${m.data}`;
         setHasFrame(true);
+      } else if (m.t === 'bstats') {
+        const s = m as unknown as StreamStats;
+        setStats((prev) => (s.fps == null ? { ...s, fps: prev?.fps ?? 0, kbps: prev?.kbps ?? 0 } : s));
       } else if (m.t === 'bstate') {
         if (m.stopped) { setHasFrame(false); setState({ url: '', title: '', tabs: [] }); return; }
         setState({ url: m.url, title: m.title, tabs: m.tabs ?? [] });
@@ -150,6 +167,7 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
             onChange={(e) => setUrl(e.target.value)} spellCheck={false} aria-label="Adresse" />
         </form>
         {!compact && <button className="btn ghost icon small" title="Ansicht an Fenster anpassen" onClick={fit}><Maximize size={13} /></button>}
+        <button className={`btn ghost icon small${showStream ? ' active' : ''}`} title="Stream-Qualität" aria-expanded={showStream} onClick={() => setShowStream((v) => !v)}><Gauge size={14} /></button>
         <button className="btn ghost icon small only-touch" title="Tastatur" onClick={() => kbd.current?.focus()}><Keyboard size={14} /></button>
         {!compact && profile.running && <button className="btn ghost icon small" title="Browser beenden" onClick={() => act(() => conn.call('browsers.stop', { id: profileId }))}><Power size={13} /></button>}
       </div>
@@ -169,6 +187,13 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
         onContextMenu={(e) => e.preventDefault()} aria-label="Ferngesteuerter Browser – klicken, dann tippen">
         <img ref={img} alt="" draggable={false} style={{ visibility: hasFrame ? 'visible' : 'hidden' }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel} />
+        {showStream && (
+          <div className="bstream" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} onKeyUp={(e) => e.stopPropagation()}>
+            <div className="bstream-head"><b>Stream</b><button className="btn ghost icon small" aria-label="Schließen" onClick={() => setShowStream(false)}><X size={12} /></button></div>
+            <StreamStatsView stats={stats} />
+            <StreamControls idPrefix={`bs-${profileId}`} value={streamDraft ?? { ...DEFAULT_STREAM, ...profile.stream }} onChange={changeStream} />
+          </div>
+        )}
         {off && !error && (
           <div className="boverlay col">
             <span className="muted">Browser ist aus.</span>

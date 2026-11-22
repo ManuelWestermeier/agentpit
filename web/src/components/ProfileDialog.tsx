@@ -4,16 +4,30 @@ import { act, useStore } from '../lib/store';
 import type { BrowserProfile } from '../lib/types';
 import { conn } from '../lib/ws';
 import { InstallBox } from './BrowserView';
+import { DEFAULT_STREAM, StreamControls } from './StreamSettings';
 
 const COLORS = ['#8bb6db', '#74c49a', '#f0a73a', '#e5695e', '#c99ce0', '#d9c36a'];
+const LANGS: [string, string][] = [
+  ['de-DE', 'Deutsch (Deutschland)'], ['de-AT', 'Deutsch (Österreich)'], ['de-CH', 'Deutsch (Schweiz)'],
+  ['en-US', 'Englisch (USA)'], ['en-GB', 'Englisch (UK)'], ['fr-FR', 'Französisch'], ['es-ES', 'Spanisch'], ['it-IT', 'Italienisch'],
+  ['nl-NL', 'Niederländisch'], ['pl-PL', 'Polnisch'], ['pt-BR', 'Portugiesisch (Brasilien)'], ['tr-TR', 'Türkisch'],
+  ['ru-RU', 'Russisch'], ['uk-UA', 'Ukrainisch'], ['ja-JP', 'Japanisch'], ['zh-CN', 'Chinesisch (vereinfacht)'],
+];
+const ZONES: string[] = (() => {
+  try { return (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf('timeZone'); }
+  catch { return ['Europe/Berlin', 'Europe/Vienna', 'Europe/Zurich', 'Europe/London', 'America/New_York', 'UTC']; }
+})();
 
 export function ProfileDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
   const existing = useStore((s) => s.browsers?.profiles.find((p) => p.id === id));
   const status = useStore((s) => s.browsers?.status);
   const [f, setF] = useState(() => ({
-    name: existing?.name ?? '', engine: existing?.engine ?? (status?.chrome ? 'chrome' : 'chromium'), headless: existing?.headless ?? status?.defaultHeadless ?? true,
-    temporary: existing?.temporary ?? false, proxy: existing?.proxy ?? '', lang: existing?.lang ?? 'de-DE', startUrl: existing?.startUrl ?? '', color: existing?.color ?? COLORS[0],
+    name: existing?.name ?? '', engine: existing?.engine ?? (status?.chrome ? 'chrome' : 'chromium'), headless: existing?.headless ?? status?.defaultHeadless ?? false,
+    temporary: existing?.temporary ?? false, proxy: existing?.proxy ?? '', lang: existing?.lang || 'de-DE', startUrl: existing?.startUrl ?? '', color: existing?.color ?? COLORS[0],
+    languages: existing?.languages ?? '', timezone: existing?.timezone ?? '', colorScheme: existing?.colorScheme ?? 'auto',
+    stream: { ...DEFAULT_STREAM, ...existing?.stream },
   }));
+  const [customLang, setCustomLang] = useState(() => !LANGS.some(([v]) => v === (existing?.lang || 'de-DE')));
   const [confirm, setConfirm] = useState('');
   const close = useCallback(onClose, [onClose]);
   useEscape(close);
@@ -24,7 +38,7 @@ export function ProfileDialog({ id, onClose }: { id: string | null; onClose: () 
       ? await act(() => conn.call<BrowserProfile & { restartNeeded?: boolean }>('browsers.update', { id, patch: f }))
       : await act(() => conn.call<BrowserProfile>('browsers.create', { profile: f }));
     if (!r) return;
-    if ((r as { restartNeeded?: boolean }).restartNeeded) useStore.getState().toast('info', 'Änderungen gelten nach Neustart des Browsers.');
+    if ((r as { restartNeeded?: boolean }).restartNeeded) useStore.getState().toast('info', 'Browser, Sprache und Proxy gelten nach Neustart des Browsers – Zeitzone, Farbschema und Stream sofort.');
     if (!id) useStore.setState({ profileView: r.id });
     onClose();
   };
@@ -34,10 +48,11 @@ export function ProfileDialog({ id, onClose }: { id: string | null; onClose: () 
     ['chrome', 'Google Chrome', !!status?.chrome],
     ['msedge', 'Microsoft Edge', !!status?.msedge],
   ];
+  const autoLangs = [...new Set([f.lang, f.lang.split('-')[0]])].join(', ');
 
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label="Browser-Identität">
+      <div className="modal modal--wide" role="dialog" aria-label="Browser-Identität">
         <h2>{id ? 'Identität bearbeiten' : 'Neue Browser-Identität'}</h2>
         <p>Eigenes Profil: Cookies, localStorage, Logins und Verlauf sind vollständig von anderen Identitäten getrennt. Fingerprint (Gerät, Grafikkarte) bleibt der dieses Rechners.</p>
         <div className="modal-row">
@@ -50,18 +65,60 @@ export function ProfileDialog({ id, onClose }: { id: string | null; onClose: () 
           </div>
         </div>
         <div className="modal-row">
-          <div><label className="label" htmlFor="pf-proxy">Proxy (optional)</label><input id="pf-proxy" className="input mono" value={f.proxy} onChange={(e) => set({ proxy: e.target.value })} placeholder="socks5://host:1080" /></div>
-          <div><label className="label" htmlFor="pf-lang">Sprache</label><input id="pf-lang" className="input mono" value={f.lang} onChange={(e) => set({ lang: e.target.value })} placeholder="de-DE" /></div>
+          <div>
+            <label className="label" htmlFor="pf-lang">Sprache</label>
+            <select id="pf-lang" className="select" value={customLang ? '*' : f.lang} onChange={(e) => {
+              if (e.target.value === '*') setCustomLang(true);
+              else { setCustomLang(false); set({ lang: e.target.value }); }
+            }}>
+              {LANGS.map(([v, l]) => <option key={v} value={v}>{l} – {v}</option>)}
+              <option value="*">Andere …</option>
+            </select>
+            {customLang && <input className="input mono" style={{ marginTop: 6 }} value={f.lang} onChange={(e) => set({ lang: e.target.value })} placeholder="z. B. sv-SE" aria-label="Sprachcode" />}
+          </div>
+          <div><label className="label" htmlFor="pf-start">Startseite</label><input id="pf-start" className="input mono" value={f.startUrl} onChange={(e) => set({ startUrl: e.target.value })} placeholder="https://accounts.google.com" /></div>
         </div>
-        <label className="label" htmlFor="pf-start">Startseite</label>
-        <input id="pf-start" className="input mono" value={f.startUrl} onChange={(e) => set({ startUrl: e.target.value })} placeholder="https://accounts.google.com" />
-        <div style={{ display: 'flex', gap: 18, marginTop: 12, flexWrap: 'wrap' }}>
-          <label className="check" title="Headless-Browser werden von manchen Logins (z. B. Google) abgelehnt"><input type="checkbox" checked={!f.headless} onChange={(e) => set({ headless: !e.target.checked })} /> {status?.virtualDisplay ? 'Echtes Browserfenster (virtuelles Display, beste Login-Kompatibilität)' : 'Echtes Browserfenster auf dem Server-Desktop'}</label>
+        <div style={{ display: 'flex', gap: 18, marginTop: 4, flexWrap: 'wrap' }}>
+          <label className="check" title="Unsichtbare (headless) Browser fallen bei Bot-Erkennung eher auf"><input type="checkbox" checked={!f.headless} onChange={(e) => set({ headless: !e.target.checked })} /> {status?.virtualDisplay ? 'Echtes Browserfenster (virtuelles Display, beste Login-Kompatibilität)' : 'Echtes Browserfenster auf dem Server-Desktop (empfohlen)'}</label>
           <label className="check"><input type="checkbox" checked={f.temporary} onChange={(e) => set({ temporary: e.target.checked })} /> Temporär (beim Beenden löschen)</label>
         </div>
         <div style={{ display: 'flex', gap: 6, marginTop: 12 }} role="radiogroup" aria-label="Farbe">
           {COLORS.map((c) => <button key={c} className={`swatch${f.color === c ? ' on' : ''}`} style={{ background: c }} onClick={() => set({ color: c })} aria-label={c} />)}
         </div>
+
+        <details className="adv">
+          <summary>Stream &amp; Komprimierung <span className="muted">– {f.stream.mode === 'auto' ? 'Auto (nach Internetgeschwindigkeit)' : `Manuell, ${f.stream.format === 'png' ? 'PNG' : `JPEG ${f.stream.quality}`}, ${f.stream.maxWidth} px, ${f.stream.fps} fps`}</span></summary>
+          <StreamControls idPrefix="pf-stream" value={f.stream} onChange={(stream) => set({ stream })} />
+          <p className="stream-hint">Lässt sich auch live in der Browser-Ansicht über das Tacho-Symbol ändern.</p>
+        </details>
+
+        <details className="adv">
+          <summary>Erweitert <span className="muted">– Sprachen, Zeitzone, Farbschema, Proxy</span></summary>
+          <div className="modal-row">
+            <div>
+              <label className="label" htmlFor="pf-langs">Bevorzugte Sprachen (Accept-Language)</label>
+              <input id="pf-langs" className="input mono" value={f.languages} onChange={(e) => set({ languages: e.target.value })} placeholder={`auto: ${autoLangs}`} />
+            </div>
+            <div>
+              <label className="label" htmlFor="pf-tz">Zeitzone</label>
+              <input id="pf-tz" className="input mono" list="pf-tz-list" value={f.timezone} onChange={(e) => set({ timezone: e.target.value })} placeholder="auto (System)" />
+              <datalist id="pf-tz-list">{ZONES.map((z) => <option key={z} value={z} />)}</datalist>
+            </div>
+          </div>
+          <div className="modal-row">
+            <div>
+              <label className="label" htmlFor="pf-scheme">Farbschema der Seiten</label>
+              <select id="pf-scheme" className="select" value={f.colorScheme} onChange={(e) => set({ colorScheme: e.target.value as BrowserProfile['colorScheme'] })}>
+                <option value="auto">Auto (System)</option>
+                <option value="light">Hell</option>
+                <option value="dark">Dunkel</option>
+              </select>
+            </div>
+            <div><label className="label" htmlFor="pf-proxy">Proxy</label><input id="pf-proxy" className="input mono" value={f.proxy} onChange={(e) => set({ proxy: e.target.value })} placeholder="socks5://host:1080" /></div>
+          </div>
+          <p className="stream-hint">Tipp gegen Bot-Erkennung: Sprache und Zeitzone sollten zum Standort der IP-Adresse passen (ohne Proxy also „auto“ lassen).</p>
+        </details>
+
         {f.engine === 'chromium' && !status?.bundled && <InstallBox />}
         <p style={{ marginTop: 12 }}>Für Google-Logins Chrome bevorzugen und sichtbar starten, falls Google den Login blockiert. Anmeldedaten tippst du selbst – Claude tippt keine Passwörter ein.</p>
         <div className="modal-actions">

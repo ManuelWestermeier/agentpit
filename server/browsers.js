@@ -12,6 +12,59 @@ const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ENGINES = ['chromium', 'chrome', 'msedge'];
 const BASE_PORT = 9230;
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
+const COLOR_SCHEMES = ['auto', 'light', 'dark'];
+
+/** Stream settings. mode "auto" picks a level from STREAM_LEVELS by measured connection quality. */
+const DEFAULT_STREAM = { mode: 'auto', quality: 70, maxWidth: 1920, fps: 30, format: 'jpeg' };
+const STREAM_LEVELS = [
+  { quality: 85, maxWidth: 1920, fps: 30 },
+  { quality: 75, maxWidth: 1920, fps: 30 },
+  { quality: 65, maxWidth: 1600, fps: 30 },
+  { quality: 55, maxWidth: 1366, fps: 24 },
+  { quality: 45, maxWidth: 1100, fps: 20 },
+  { quality: 35, maxWidth: 900, fps: 15 },
+  { quality: 28, maxWidth: 720, fps: 10 },
+];
+const AUTO_START_LEVEL = 2;
+const PROFILE_DEFAULTS = { proxy: '', lang: 'de-DE', languages: '', timezone: '', colorScheme: 'auto', startUrl: '', color: '#8bb6db', temporary: false };
+
+function withDefaults(p) {
+  return { ...PROFILE_DEFAULTS, ...p, stream: { ...DEFAULT_STREAM, ...(p.stream ?? {}) } };
+}
+
+/** Accept-Language list of a profile: explicit list, else main language + its base language. */
+function acceptLanguages(p) {
+  const list = (p.languages || [p.lang, p.lang?.split('-')[0]].filter(Boolean).join(',')).split(',').map((s) => s.trim()).filter(Boolean);
+  return [...new Set(list)].join(',');
+}
+
+function cleanStream(input, base) {
+  const out = { ...base };
+  if (input.mode === 'auto' || input.mode === 'manual') out.mode = input.mode;
+  if (input.format === 'jpeg' || input.format === 'png') out.format = input.format;
+  if (input.quality !== undefined) out.quality = Math.round(num(input.quality, 10, 100, base.quality));
+  if (input.maxWidth !== undefined) out.maxWidth = Math.round(num(input.maxWidth, 480, 3840, base.maxWidth));
+  if (input.fps !== undefined) out.fps = Math.round(num(input.fps, 1, 60, base.fps));
+  return out;
+}
+
+function validTimezone(tz) {
+  try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; }
+}
+
+/**
+ * Accept-Language / navigator.languages of a headed browser come from the profile preferences,
+ * --lang only sets the UI language. Write them before the browser starts (it must not be running).
+ */
+async function writeLanguagePrefs(userDir, languages) {
+  if (!languages) return;
+  const file = path.join(userDir, 'Default', 'Preferences');
+  let prefs = {};
+  try { prefs = JSON.parse(await fsp.readFile(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') return; } // unreadable → leave untouched
+  prefs.intl = { ...(prefs.intl ?? {}), accept_languages: languages, selected_languages: languages };
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(file, JSON.stringify(prefs));
+}
 
 function onPath(bin) {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
@@ -74,8 +127,8 @@ async function waitForCdp(port, ms = 20_000) {
   throw new UserError('Browser antwortet nicht auf dem Debug-Port');
 }
 
-/** Max. unsent bytes per viewer before frames are skipped (~1–2 JPEG frames). */
-const FRAME_BUFFER_LIMIT = 384 * 1024;
+/** Lower bound of unsent bytes per viewer before frames are skipped (otherwise 1.5 × frame size). */
+const FRAME_BUFFER_MIN = 64 * 1024;
 
 const num = (v, lo, hi, d = 0) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
 
@@ -101,7 +154,7 @@ export class Browsers extends EventEmitter {
 
   async init() {
     const saved = await this.ctx.store.readJson(this.file, []);
-    for (const p of Array.isArray(saved) ? saved : []) if (ID_RE.test(p.id)) this.profiles.set(p.id, p);
+    for (const p of Array.isArray(saved) ? saved : []) if (ID_RE.test(p.id)) this.profiles.set(p.id, withDefaults(p));
     if (!this.profiles.size) await this.create({ name: 'Haupt-Identität' });
   }
 
@@ -131,7 +184,20 @@ export class Browsers extends EventEmitter {
       if (proxy && !/^(https?|socks5?):\/\/[^\s"]+$/i.test(proxy)) throw new UserError('Proxy im Format http://host:port oder socks5://host:port');
       out.proxy = proxy;
     }
-    if (typeof input.lang === 'string') out.lang = /^[a-z]{2}(-[A-Z]{2})?$/.test(input.lang.trim()) ? input.lang.trim() : '';
+    if (typeof input.lang === 'string') out.lang = /^[a-z]{2,3}(-[A-Z]{2})?$/.test(input.lang.trim()) ? input.lang.trim() : 'de-DE';
+    if (typeof input.languages === 'string') {
+      const list = input.languages.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+      const bad = list.find((l) => !/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(l));
+      if (bad) throw new UserError(`Ungültige Sprache „${bad.slice(0, 20)}“ – Format z. B. de-DE, de, en-US`);
+      out.languages = [...new Set(list)].slice(0, 10).join(',');
+    }
+    if (typeof input.timezone === 'string') {
+      const tz = input.timezone.trim();
+      if (tz && !validTimezone(tz)) throw new UserError(`Unbekannte Zeitzone „${tz.slice(0, 40)}“ – z. B. Europe/Berlin`);
+      out.timezone = tz;
+    }
+    if (COLOR_SCHEMES.includes(input.colorScheme)) out.colorScheme = input.colorScheme;
+    if (input.stream && typeof input.stream === 'object') out.stream = cleanStream(input.stream, base.stream ?? DEFAULT_STREAM);
     if (typeof input.startUrl === 'string') out.startUrl = input.startUrl.trim().slice(0, 500);
     if (typeof input.color === 'string' && /^#[0-9a-f]{6}$/i.test(input.color)) out.color = input.color;
     return out;
@@ -144,9 +210,7 @@ export class Browsers extends EventEmitter {
     const used = new Set([...this.profiles.values()].map((p) => p.port));
     let port = BASE_PORT;
     while (used.has(port)) port++;
-    const p = this.#clean(input, {
-      id, name: id, engine: this.defaultEngine(), headless: this.defaultHeadless(), temporary: false, proxy: '', lang: 'de-DE', startUrl: '', color: '#8bb6db', port, createdAt: Date.now(),
-    });
+    const p = this.#clean(input, withDefaults({ id, name: id, engine: this.defaultEngine(), headless: this.defaultHeadless(), port, createdAt: Date.now() }));
     this.profiles.set(id, p);
     await this.#save();
     this.emitList();
@@ -158,8 +222,23 @@ export class Browsers extends EventEmitter {
     const next = this.#clean(patch, p);
     this.profiles.set(id, next);
     await this.#save();
+    const entry = this.running.get(id);
+    let restartNeeded = false;
+    if (entry) {
+      // time zone, color scheme and stream apply live; process-level settings need a restart
+      restartNeeded = ['engine', 'headless', 'proxy', 'lang', 'languages'].some((k) => p[k] !== next[k]);
+      entry.profile = next;
+      for (const s of entry.identity.values()) this.#applyIdentity(entry, s).catch(() => {});
+      if (JSON.stringify(p.stream) !== JSON.stringify(next.stream)) this.#streamChanged(entry);
+    }
     this.emitList();
-    return { ...next, restartNeeded: this.running.has(id) };
+    return { ...next, restartNeeded };
+  }
+
+  /** Change only the stream settings (live, from the browser view). */
+  async setStream(id, stream) {
+    const p = this.get(id);
+    return this.update(id, { stream: { ...p.stream, ...(stream ?? {}) } });
   }
 
   async remove(id) {
@@ -263,10 +342,11 @@ export class Browsers extends EventEmitter {
     }
     if (p.proxy) args.push(`--proxy-server=${p.proxy}`);
     if (p.lang) args.push(`--lang=${p.lang}`);
+    await writeLanguagePrefs(userDir, acceptLanguages(p)).catch(() => {});
     if (process.platform === 'linux' && process.getuid?.() === 0) args.push('--no-sandbox');
     args.push(p.startUrl || 'about:blank');
 
-    const entry = { id, port, headless, engine: p.engine, lang: p.lang, uaPatch: null, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
+    const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
     this.running.set(id, entry);
     entry.starting = (async () => {
       const proc = spawn(exe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false, env });
@@ -282,8 +362,9 @@ export class Browsers extends EventEmitter {
         entry.context = entry.browser.contexts()[0];
         if (headless) {
           const ua = headedUserAgent(exe, p.engine) ?? (await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.userAgent.replace('HeadlessChrome', 'Chrome')).catch(() => null));
-          if (ua) entry.uaPatch = { userAgent: ua, platform: process.platform === 'win32' ? 'Win32' : process.platform === 'darwin' ? 'MacIntel' : 'Linux x86_64', userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine), ...(p.lang ? { acceptLanguage: [...new Set([p.lang, p.lang.split('-')[0]])].join(',') } : {}) };
+          if (ua) entry.uaPatch = { userAgent: ua, platform: process.platform === 'win32' ? 'Win32' : process.platform === 'darwin' ? 'MacIntel' : 'Linux x86_64', userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine) };
         }
+        entry.statsTimer = setInterval(() => this.#tickStream(entry), 1500);
         entry.context.on('page', (page) => { this.#watchPage(entry, page); this.#activate(entry, page).catch(() => {}); });
         for (const page of entry.context.pages()) this.#watchPage(entry, page);
         const first = entry.context.pages().at(-1) ?? await entry.context.newPage();
@@ -303,6 +384,9 @@ export class Browsers extends EventEmitter {
   }
 
   #onExit(id, entry) {
+    clearInterval(entry.statsTimer);
+    clearTimeout(entry.flushTimer);
+    clearTimeout(entry.trailTimer);
     if (this.running.get(id) !== entry) return;
     this.running.delete(id);
     for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bstate', profileId: id, stopped: true });
@@ -335,14 +419,17 @@ export class Browsers extends EventEmitter {
   #watchPage(entry, page) {
     if (page.__cockpitWatched) return;
     page.__cockpitWatched = true;
-    if (entry.uaPatch) {
-      // the override lives as long as this session stays attached, so keep it for the page's lifetime
-      entry.context.newCDPSession(page).then((s) => s.send('Emulation.setUserAgentOverride', entry.uaPatch)).catch(() => {});
-    }
+    // Emulation overrides live as long as their session stays attached → one session per page lifetime
+    entry.context.newCDPSession(page).then((s) => {
+      if (page.isClosed()) return;
+      entry.identity.set(page, s);
+      return this.#applyIdentity(entry, s);
+    }).catch(() => {});
     const update = () => this.#pushState(entry);
     page.on('framenavigated', (f) => { if (f === page.mainFrame()) update(); });
     page.on('load', update);
     page.on('close', () => {
+      entry.identity.delete(page);
       if (entry.active === page) {
         const next = entry.context?.pages().filter((p) => !p.isClosed()).at(-1);
         if (next) this.#activate(entry, next).catch(() => {});
@@ -353,6 +440,18 @@ export class Browsers extends EventEmitter {
       entry.dialog = d;
       for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bdialog', profileId: entry.id, type: d.type(), message: d.message(), defaultValue: d.defaultValue() });
     });
+  }
+
+  /** Language, time zone, color scheme (and for headless: headed client hints) of one page. */
+  async #applyIdentity(entry, s) {
+    const p = entry.profile;
+    const langs = acceptLanguages(p);
+    const jobs = [];
+    if (entry.uaPatch) jobs.push(s.send('Emulation.setUserAgentOverride', { ...entry.uaPatch, ...(langs ? { acceptLanguage: langs } : {}) }));
+    if (p.lang) jobs.push(s.send('Emulation.setLocaleOverride', { locale: p.lang.replace('-', '_') }).catch(() => {})); // fails if already set by another session
+    jobs.push(s.send('Emulation.setTimezoneOverride', { timezoneId: p.timezone || '' }).catch(() => {})); // '' = system zone
+    jobs.push(s.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: p.colorScheme === 'auto' ? '' : p.colorScheme }] }));
+    await Promise.all(jobs);
   }
 
   async #activate(entry, page) {
@@ -392,26 +491,110 @@ export class Browsers extends EventEmitter {
     const page = entry.active;
     const cdp = await entry.context.newCDPSession(page);
     entry.cdp = cdp;
+    entry.frameAt = 0;
+    entry.sentAt = 0;
     cdp.on('Page.screencastFrame', (f) => {
-      cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+      // fps limit, part 1: delaying the ack slows Chrome down (saves CPU). Capped at one frame gap –
+      // Chrome keeps a few frames in flight, so uncapped delays would add up and stall the stream.
+      const now = Date.now();
+      const gap = 1000 / this.#streamParams(entry).fps;
+      const wait = Math.min(gap, Math.max(0, entry.frameAt + gap - now));
+      entry.frameAt = now + wait;
+      setTimeout(() => cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}), wait);
       if (entry.cdp !== cdp) return;
-      const frame = { t: 'bframe', profileId: entry.id, data: f.data, w: f.metadata.deviceWidth, h: f.metadata.deviceHeight };
-      entry.lastFrame = frame;
-      for (const c of entry.viewers) this.#sendFrame(entry, c);
+      entry.lastFrame = { t: 'bframe', profileId: entry.id, data: f.data, fmt: entry.streamFormat, w: f.metadata.deviceWidth, h: f.metadata.deviceHeight };
+      // part 2: forward at most one frame per gap; a trailing send makes sure the final picture arrives
+      const due = entry.sentAt + gap * 0.9 - now;
+      if (due <= 0) this.#forwardFrame(entry);
+      else if (!entry.trailTimer) entry.trailTimer = setTimeout(() => { entry.trailTimer = null; if (entry.cdp === cdp) this.#forwardFrame(entry); }, due);
     });
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 65, maxWidth: 1920, maxHeight: 1200, everyNthFrame: 1 });
+    await this.#screencastOn(entry, cdp);
+  }
+
+  #forwardFrame(entry) {
+    clearTimeout(entry.trailTimer);
+    entry.trailTimer = null;
+    entry.sentAt = Date.now();
+    entry.net.frames++;
+    for (const c of entry.viewers) this.#sendFrame(entry, c, true);
+  }
+
+  /** Effective stream settings: manual values, or the level the auto control currently chose. */
+  #streamParams(entry) {
+    const s = entry.profile.stream ?? DEFAULT_STREAM;
+    if (s.mode !== 'auto') return s;
+    return { ...STREAM_LEVELS[entry.level], format: 'jpeg' };
+  }
+
+  async #screencastOn(entry, cdp) {
+    const s = this.#streamParams(entry);
+    entry.streamFormat = s.format;
+    await cdp.send('Page.startScreencast', { format: s.format, ...(s.format === 'jpeg' ? { quality: s.quality } : {}), maxWidth: s.maxWidth, maxHeight: s.maxWidth, everyNthFrame: 1 });
+  }
+
+  /** Apply new stream settings to a running screencast without reconnecting. */
+  async #streamChanged(entry) {
+    entry.net = { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 };
+    if (!entry.cdp) return;
+    // fresh session: restarting the screencast on the same session leaves Chrome waiting for acks of dropped frames
+    await this.#restartScreencast(entry);
+    this.#sendStats(entry, 0);
+  }
+
+  /**
+   * Every 1.5 s: measure what reached the viewers. Auto mode steps quality down as soon as frames
+   * have to be skipped (connection too slow) and back up after ~5 s without any backlog.
+   */
+  #tickStream(entry) {
+    if (!entry.viewers.size) return;
+    const n = entry.net;
+    const total = n.sent + n.skipped;
+    if ((entry.profile.stream?.mode ?? 'auto') === 'auto' && total > 0) {
+      const skip = n.skipped / total, pressure = (n.pressure ?? 0) / total;
+      let level = entry.level;
+      if (skip > 0.4) level += 2;
+      else if (skip > 0.1) level += 1;
+      else if (pressure < 0.25 && ++n.good >= 2) level -= 1;
+      else if (pressure >= 0.25) n.good = 0;
+      level = Math.max(0, Math.min(STREAM_LEVELS.length - 1, level));
+      if (level !== entry.level) {
+        entry.level = level;
+        this.#sendStats(entry, 1.5);
+        this.#streamChanged(entry).catch(() => {});
+        return;
+      }
+    }
+    this.#sendStats(entry, 1.5);
+    Object.assign(n, { sent: 0, skipped: 0, bytes: 0, frames: 0, pressure: 0 });
+  }
+
+  #sendStats(entry, secs) {
+    const n = entry.net, s = this.#streamParams(entry);
+    const msg = {
+      t: 'bstats', profileId: entry.id, mode: entry.profile.stream?.mode ?? 'auto', level: entry.level, levels: STREAM_LEVELS.length,
+      quality: s.quality, maxWidth: s.maxWidth, fpsLimit: s.fps, format: s.format,
+      fps: secs ? Math.round((n.frames / secs) * 10) / 10 : null, kbps: secs ? Math.round((n.bytes * 8) / secs / 1000) : null, // null = settings changed, no new measurement yet
+      skipped: n.skipped, frameKb: entry.lastFrame ? Math.round(entry.lastFrame.data.length / 1024) : 0,
+    };
+    for (const c of entry.viewers) this.ctx.hub.send(c, msg);
   }
 
   /**
    * Latest frame wins: never queue frames behind a busy socket (that is what makes a stream lag).
    * A viewer whose buffer is still full gets only the newest frame once it has drained.
    */
-  #sendFrame(entry, c) {
-    if (c.ws.bufferedAmount < FRAME_BUFFER_LIMIT) {
+  #sendFrame(entry, c, fresh = false) {
+    const size = entry.lastFrame.data.length;
+    const limit = Math.max(FRAME_BUFFER_MIN, size * 1.5); // ≈ at most one frame in flight
+    const buffered = c.ws.bufferedAmount;
+    if (buffered < limit) {
       entry.stale?.delete(c);
+      if (fresh) { entry.net.sent++; if (buffered > size * 0.5) entry.net.pressure = (entry.net.pressure ?? 0) + 1; }
+      entry.net.bytes += size;
       this.ctx.hub.send(c, entry.lastFrame);
       return;
     }
+    if (fresh) entry.net.skipped++;
     (entry.stale ??= new Set()).add(c);
     if (entry.flushTimer) return;
     entry.flushTimer = setTimeout(() => {

@@ -193,7 +193,13 @@ export interface HistoryResult {
 export interface BrowserProfile {
   id: string; name: string; engine: 'chromium' | 'chrome' | 'msedge'; headless: boolean; temporary: boolean;
   proxy: string; lang: string; startUrl: string; color: string; port: number | null;
+  languages: string; timezone: string; colorScheme: 'auto' | 'light' | 'dark'; stream: StreamSettings;
   running: boolean; starting: boolean; viewers: number; url: string | null; title: string | null;
+}
+export interface StreamSettings { mode: 'auto' | 'manual'; quality: number; maxWidth: number; fps: number; format: 'jpeg' | 'png' }
+export interface StreamStats {
+  mode: 'auto' | 'manual'; level: number; levels: number; quality: number; maxWidth: number; fpsLimit: number; format: string;
+  fps: number; kbps: number; skipped: number; frameKb: number;
 }
 export interface BrowsersState {
   profiles: BrowserProfile[];
