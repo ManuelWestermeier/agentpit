@@ -109,7 +109,22 @@ Empfehlung bei öffentlicher Domain: zusätzlich **Cloudflare Access** (Zero Tru
 - **Gemeinsamer Ordner `projects/shared-claude/`** (aus jedem Projekt `../shared-claude/`): alle Sessions dürfen dort lesen und schreiben – für Wissen, Datensätze und Übergaben zwischen Sessions. Wird beim ersten Start mit einer `README.md` angelegt und nie als Projekt angezeigt. Keine Zugangsdaten dort ablegen.
 - **Sub-Sessions:** Claude startet mit `session_create` weitere Sessions (eigenes Projekt, erbt Modell und Berechtigungsmodus, optional eigene Browser-Identität) und steuert sie mit `session_send`, `session_status`, `session_wait`, `session_stop`, `session_list`. In der Seitenleiste sind sie mit „↳“ markiert. Beispiel-Pipeline: Session 1 recherchiert Videos → legt die Liste in `shared-claude/pipelines/…` ab → Session 2 schneidet Clips → Sessions 3 und 4 veröffentlichen je in einer eigenen Identität/einem eigenen Account. Grenzen: höchstens 3 Ebenen, 12 neue Sessions pro Stunde und Session, gleichzeitig `MAX_RUNNERS`.
 - **Zeitpläne** (Tab Dienste → Zeitpläne, oder Claude mit `schedule_create`): ein Prompt einmalig, alle n Minuten oder per Cron (`0 9 * * 1-5`, Ortszeit) an eine Session. Gespeichert in `data/schedules.json`; während das Cockpit aus war, verpasste Läufe werden nicht nachgeholt (einmalige bis 6 h verspätet schon). Ist `MAX_RUNNERS` erreicht, wird jede Minute erneut versucht.
+- Claude richtet Einrichtbares selbst ein, statt dich darum zu bitten: Datenbankverbindungen (`db_connect`, SQLite oder mit von dir genannten Zugangsdaten), Dienste, Zeitpläne, Identitäten, Sub-Sessions. `browser_info` zeigt je Identität, bei welchen Diensten sie angemeldet ist (aus den Login-Cookies, ohne Seitenaufruf). Nur Logins, Passwörter und 2FA erledigst immer du.
 - Freigaben: Lesende Werkzeuge und der Identitätswechsel laufen ohne Rückfrage; neue Sessions starten, Prompts senden und Zeitpläne anlegen fragen im Modus „default“ nach (mit „Immer erlauben“ dauerhaft freigebbar). Freigaben einer Sub-Session erteilst du in deren Projekt.
+
+## Automatisches Aufräumen
+
+Läuft 2 Minuten nach dem Start und dann alle 6 Stunden (abschaltbar mit `CLEANUP=false`, Fristen in `.env`, siehe `.env.example`):
+
+| Was | Wann gelöscht |
+|---|---|
+| `output/browser/` – Seiten-Snapshots, Logs, Traces von Playwright | nach 2 Tagen |
+| `output/browser/` – Aufnahmen, Screenshots von Playwright | nach 7 Tagen |
+| `work/` – Zwischenstände (nicht, solange die Session gerade arbeitet) | nach 14 Tagen |
+| `trash/` – gelöschte Projekte und Identitäten | 30 Tage nach dem Löschen |
+| Browser-Caches einer Identität (HTTP-, Code-, GPU-, Komponenten-Cache) | sobald über 200 MB, wenn ihr Browser nicht läuft |
+
+Nie angefasst: Ergebnisse in `output/` (außer mit `OUTPUT_DAYS` > 0), `input/`, Projektdateien, `.git`/`.claude`, `shared-claude/`, sowie Logins, Cookies, Verlauf, Passwörter und Erweiterungen der Identitäten. Zusätzlich ist der HTTP-Cache jeder Identität auf 256 MB begrenzt.
 
 ## Git & GitHub
 

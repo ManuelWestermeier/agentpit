@@ -89,6 +89,20 @@ function browserMajor(exe) {
 const MARKER_COOKIE = 'cockpit-identity';
 const MARKER_DOMAIN = 'cockpit-identity.invalid';
 
+/** [site, cookie domain, session cookie names] – presence of a valid one = signed in. */
+const LOGIN_COOKIES = [
+  ['Google/YouTube', /(^|\.)google\.com$/, ['SID', '__Secure-1PSID']],
+  ['LinkedIn', /(^|\.)linkedin\.com$/, ['li_at']],
+  ['X/Twitter', /(^|\.)(x|twitter)\.com$/, ['auth_token']],
+  ['Facebook', /(^|\.)facebook\.com$/, ['c_user']],
+  ['Instagram', /(^|\.)instagram\.com$/, ['sessionid']],
+  ['TikTok', /(^|\.)tiktok\.com$/, ['sessionid', 'sessionid_ss']],
+  ['GitHub', /(^|\.)github\.com$/, ['user_session']],
+  ['Microsoft', /(^|\.)(live|microsoftonline)\.com$/, ['ESTSAUTHPERSISTENT', '__Host-MSAAUTHP']],
+  ['Amazon', /(^|\.)amazon\.(de|com)$/, ['at-main', 'at-acbde']],
+  ['Reddit', /(^|\.)reddit\.com$/, ['reddit_session', 'token_v2']],
+];
+
 /** One CDP command against the browser endpoint on `port` (no Playwright attach). */
 async function cdpOnce(port, method, params = {}, ms = 3000) {
   const v = await withTimeout(fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json()), ms, 'CDP');
@@ -429,6 +443,7 @@ export class Browsers extends EventEmitter {
         : `${p.engine === 'chrome' ? 'Google Chrome' : 'Microsoft Edge'} nicht gefunden – im Profil eine andere Engine wählen.`);
     }
     const userDir = this.dir(id);
+    await this.ctx.janitor?.profileJob(id); // cache cleanup of this profile still running → wait
     await fsp.mkdir(userDir, { recursive: true });
     // Each identity keeps its own port – never one reserved by another identity. A Claude session
     // stays connected to that port, so a taken-over port would hand it a different identity.
@@ -454,6 +469,7 @@ export class Browsers extends EventEmitter {
       // identities stay separate: no browser sync (Edge otherwise signs fresh profiles into the
       // Windows Microsoft account and syncs passwords/history/tabs between all of them)
       '--disable-sync',
+      '--disk-cache-size=268435456', // HTTP cache max. 256 MB per identity (default grows with the disk)
       `--disable-features=Translate,MediaRouter${process.platform === 'win32' ? ',CalculateNativeWinOcclusion' : ''}`,
       '--window-size=1366,860',
       // keep rendering (and the screencast) going when the window is covered or in the background
@@ -549,6 +565,11 @@ export class Browsers extends EventEmitter {
     }
   }
 
+  /** Is the identity's profile folder held by a browser process (also one not managed by this cockpit)? */
+  profileInUse(id) {
+    return profileLocked(this.dir(id));
+  }
+
   /** A port that is free and not reserved by any other identity. */
   async #freePort(id) {
     const reserved = new Set([...this.profiles.values()].filter((x) => x.id !== id).map((x) => x.port).filter(Boolean));
@@ -573,6 +594,22 @@ export class Browsers extends EventEmitter {
     }
   }
 
+  /**
+   * Where a running identity is signed in – read from the sites' login cookies (names only), so Claude
+   * gets ground truth for this exact browser instead of remembering what it saw in another identity.
+   */
+  async loginHints(id) {
+    const e = this.running.get(id);
+    if (!e?.ready) return null;
+    try {
+      const { cookies = [] } = await cdpOnce(e.port, 'Storage.getCookies');
+      const has = (domainRe, names) => cookies.some((c) => domainRe.test(c.domain.replace(/^\./, '')) && names.includes(c.name) && (c.expires <= 0 || c.expires * 1000 > Date.now()));
+      return LOGIN_COOKIES.filter(([, re, names]) => has(re, names)).map(([site]) => site);
+    } catch {
+      return null;
+    }
+  }
+
   /** Persistent marker cookie: lets a later cockpit process recognise this identity's browser. */
   async #markProfile(browser, id) {
     try {
@@ -591,6 +628,10 @@ export class Browsers extends EventEmitter {
     for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bstate', profileId: id, stopped: true });
     const p = this.profiles.get(id);
     if (p?.temporary) fsp.rm(this.dir(id), { recursive: true, force: true }).catch(() => {});
+    // empty the caches once the process has really released the profile (no-op below PROFILE_CACHE_MB)
+    else if (this.ctx.config.cleanup && this.ctx.janitor) {
+      setTimeout(() => this.ctx.janitor.cleanProfile(id).catch(() => {}), 8000).unref?.();
+    }
     this.emitList();
   }
 
@@ -905,7 +946,18 @@ export class Browsers extends EventEmitter {
 
   async input(id, ev) {
     const e = this.#entry(id);
-    const cdp = e.cdp ?? await e.context.newCDPSession(e.active);
+    try {
+      await this.#dispatchInput(e, e.cdp ?? await e.context.newCDPSession(e.active), ev);
+    } catch (err) {
+      if (!/closed|detached|No target/i.test(err.message)) throw err;
+      // The viewed tab just closed (by the page, by Claude or another tool) – the event is meaningless
+      // now; show the remaining tab instead of failing every further mouse move.
+      const next = e.context?.pages().filter((p) => !p.isClosed()).at(-1);
+      if (next && (next !== e.active || e.active.isClosed())) await this.#activate(e, next).catch(() => {});
+    }
+  }
+
+  async #dispatchInput(e, cdp, ev) {
     const modifiers = (ev.alt ? MOD.alt : 0) | (ev.ctrl ? MOD.ctrl : 0) | (ev.meta ? MOD.meta : 0) | (ev.shift ? MOD.shift : 0);
     const x = num(ev.x, 0, 10_000), y = num(ev.y, 0, 10_000);
     switch (ev.kind) {

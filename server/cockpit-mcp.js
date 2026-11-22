@@ -33,9 +33,14 @@ function short(r) {
 export function cockpitMcp(ctx, projectId) {
   const { databases, services, browsers, projects } = ctx;
 
-  const identity = (id) => {
+  const identity = async (id) => {
     const b = browsers.list({ hidden: true }).find((x) => x.id === id);
-    return b && { id: b.id, name: b.hidden ? 'isoliert (nur dieses Projekt, keine Logins geteilt)' : b.name, läuft: b.running, url: b.url, titel: b.title };
+    if (!b) return null;
+    const logins = await browsers.loginHints(id);
+    return {
+      id: b.id, name: b.hidden ? 'isoliert (nur dieses Projekt, keine Logins geteilt)' : b.name, läuft: b.running, url: b.url, titel: b.title,
+      angemeldetBei: logins ?? 'unbekannt (Browser läuft nicht – startet beim ersten Playwright-Aufruf)',
+    };
   };
   const target = async (session) => {
     const id = String(session ?? '').trim();
@@ -60,6 +65,14 @@ export function cockpitMcp(ctx, projectId) {
         wrap(async ({ connection, sql }) => table(await databases.run(projectId, connection, sql, 'read')))),
       tool('db_execute', 'Ändert Daten oder Schema per SQL. Nur bei Verbindungen mit Schreibfreigabe; der Nutzer bestätigt jeden Aufruf.', { connection: z.string(), sql: z.string() },
         wrap(async ({ connection, sql }) => table(await databases.run(projectId, connection, sql, 'write')))),
+      tool('db_connect', 'Richtet eine Datenbankverbindung im Cockpit ein oder ändert sie (der Nutzer bestätigt). SQLite: file = Pfad relativ zum Projekt (z. B. data/app.db, wird beim ersten Schreiben angelegt). PostgreSQL/MySQL: url mit Zugangsdaten, die der Nutzer genannt hat – nie erfinden.',
+        {
+          name: z.string(), type: z.enum(['sqlite', 'postgres', 'mysql']), file: z.string().optional(), url: z.string().optional(),
+          writable: z.boolean().optional().describe('Schreiben erlauben (db_execute)'), note: z.string().optional(), id: z.string().optional().describe('zum Ändern einer bestehenden Verbindung'),
+        },
+        wrap(async (a) => databases.save(projectId, a))),
+      tool('db_remove', 'Entfernt eine Datenbankverbindung aus dem Cockpit (die Datenbank/Datei selbst bleibt unangetastet).', { connection: z.string() },
+        wrap(async ({ connection }) => { await databases.remove(projectId, connection); return { entfernt: connection }; })),
       tool('services_list', 'Dienste (Dev-Server usw.) dieses Projekts mit Status und URL.', {},
         wrap(async () => (await services.list(projectId)).map(({ id, name, command, status, detectedUrl, url, exitCode }) => ({ id, name, command, status, url: url || detectedUrl, exitCode })))),
       tool('service_logs', 'Letzte Log-Zeilen eines Dienstes.', { id: z.string(), lines: z.number().int().min(1).max(2000).optional() },
@@ -76,9 +89,9 @@ export function cockpitMcp(ctx, projectId) {
           const active = await runner.activeBrowserId();
           const all = await projects.list();
           return {
-            aktiv: identity(active),
-            identitäten: browsers.list().map((b) => ({ ...identity(b.id), genutztVon: all.filter((p) => p.browserProfile === b.id).map((p) => p.id) })),
-            hinweis: 'browser_use wechselt sofort. Der Nutzer sieht jede Identität live und loggt sich dort selbst ein; Logins bleiben im Profil gespeichert, auch nach Neustarts.',
+            aktiv: await identity(active),
+            identitäten: await Promise.all(browsers.list().map(async (b) => ({ ...(await identity(b.id)), genutztVon: all.filter((p) => p.browserProfile === b.id).map((p) => p.id) }))),
+            hinweis: 'angemeldetBei kommt aus den Login-Cookies dieses Browsers (welches Konto genau, zeigt nur die Website). browser_use wechselt sofort. Logins erledigt der Nutzer selbst; sie bleiben im Profil gespeichert, auch nach Neustarts.',
           };
         })),
       tool('browser_use', 'Wechselt die Browser-Identität dieser Session sofort (der nächste Playwright-Aufruf läuft im anderen Profil, mit dessen Logins). identity = id aus browser_info, leer = isolierter Browser ohne Logins.',
@@ -90,7 +103,10 @@ export function cockpitMcp(ctx, projectId) {
           const runner = await ctx.runners.get(projectId);
           runner.project = await projects.get(projectId);
           await runner.browserChanged(); // old connection is gone before Claude's next Playwright call
-          return { aktiv: identity(await runner.activeBrowserId()), hinweis: 'Gewechselt. Offene Tabs der vorherigen Identität bleiben dort erhalten.' };
+          return {
+            aktiv: await identity(await runner.activeBrowserId()),
+            hinweis: 'Gewechselt. Alles, was du vorher gesehen hast (Konten, Seiteninhalte, Login-Status), gehört zur vorherigen Identität und gilt hier NICHT – in dieser Identität neu laden und neu prüfen. Offene Tabs der vorherigen Identität bleiben dort erhalten.',
+          };
         })),
       tool('browser_create', 'Legt eine neue Browser-Identität an (eigenes Profil, z. B. pro Account). Einloggen muss sich der Nutzer selbst.',
         { name: z.string(), engine: z.enum(['chrome', 'msedge', 'chromium']).optional() },

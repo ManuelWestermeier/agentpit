@@ -70,5 +70,13 @@ export const config = Object.freeze({
   previewPublicUrl: (env.PREVIEW_PUBLIC_URL || '').replace(/\/+$/, ''),
   maxBrowsers: int(env.MAX_BROWSERS, 4, 1, 20),
   historyLimit: int(env.HISTORY_LIMIT, 4000, 200, 50_000),
+  // automatic cleanup (server/janitor.js); ages in days since last change
+  cleanup: bool(env.CLEANUP, true),
+  trashDays: int(env.TRASH_DAYS, 30, 1, 3650),                     // deleted projects/identities in trash/
+  browserArtifactDays: int(env.BROWSER_ARTIFACT_DAYS, 2, 1, 365),  // output/browser: snapshots, logs, traces
+  browserMediaDays: int(env.BROWSER_MEDIA_DAYS, 7, 1, 3650),       // output/browser: recordings, screenshots
+  workDays: int(env.WORK_DAYS, 14, 1, 3650),                       // work/: intermediate files
+  outputDays: int(env.OUTPUT_DAYS, 0, 0, 3650),                    // output/ results: 0 = keep forever
+  profileCacheMb: int(env.PROFILE_CACHE_MB, 200, 50, 100_000),     // browser caches per identity above this → emptied
   permissionModes: PERMISSION_MODES,
 });

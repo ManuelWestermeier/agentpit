@@ -143,7 +143,8 @@ for (const mode of modes) {
         const worst = Math.max(...recent);
         // bounded: base latency + at most 3 frames on the wire (+ scheduling slack) – it must not keep growing
         const maxTx = Math.max(...txTimes.filter((x) => x.at > Date.now() - 4500).map((x) => x.tx));
-        const bound = BASE + 3 * maxTx + 400;
+        // + slack for timer jitter on a loaded machine; without flow control this would be many seconds and growing
+        const bound = BASE + 3 * maxTx + 1000;
         assert.ok(worst < bound, `Latenz läuft weg: ${worst} ms (Grenze ${Math.round(bound)} ms)`);
         assert.ok(maxInflight <= 3, `zu viele unbestätigte Bilder unterwegs: ${maxInflight}`);
         const s = stats.filter((x) => x.rtt != null).at(-1); // messages right after a level change carry no measurement

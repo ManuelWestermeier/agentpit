@@ -25,6 +25,7 @@ const cockpitAppend = ({ projectId, sharedDir, parentId }) => `# Umgebung: Agent
 - Kein interaktives Terminal: Befehle dürfen nicht auf Eingaben warten (-y/--yes, kein Pager, kein Editor).
 - Ergebnisse (Video, Bild, Audio, PDF, HTML) nach ./output/ schreiben – das Cockpit zeigt sie dort als Vorschau. Uploads des Nutzers liegen in ./input/.
 - Lange Jobs (Renderings, Dev-Server) im Hintergrund starten, damit der Nutzer weiter steuern kann.
+- Alles, was sich im Cockpit einrichten lässt – Datenbankverbindungen (db_connect), Dienste (service_define), Zeitpläne, Browser-Identitäten, Sub-Sessions –, richtest du selbst über die mcp__cockpit__-Tools ein; der Nutzer bestätigt per Freigabe. Bitte ihn nicht, das selbst in der Oberfläche zu tun. Nur Logins/Passwörter/2FA erledigt immer der Nutzer.
 - Dieses Projekt/diese Session: "${projectId}"${parentId ? ` – gestartet von der Session "${parentId}" (Ergebnis dort per session_send melden, wenn die Aufgabe es verlangt)` : ''}.
 
 ## Gemeinsamer Ordner ../${SHARED_DIR_NAME}/

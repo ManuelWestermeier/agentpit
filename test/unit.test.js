@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Files } from '../server/files.js';
 import { Limits } from '../server/limits.js';
+import { Janitor, trashTime } from '../server/janitor.js';
 import { Media } from '../server/media.js';
 import { Projects, SHARED_DIR_NAME } from '../server/projects.js';
 import { Schedules, nextCron, parseCron } from '../server/schedules.js';
@@ -159,6 +160,57 @@ test('Projects: shared-claude folder is never a project', async () => {
   await assert.rejects(projects.get(SHARED_DIR_NAME), /kein Projekt/);
   const child = await projects.create({ name: 'Kind', parentId: p.id, git: false });
   assert.equal(child.parentId, p.id);
+});
+
+test('Janitor: deletes only disposable files, keeps results, inputs, shared folder and logins', async () => {
+  const root = tmp('janitor');
+  const projectsDir = path.join(root, 'projects'), trashDir = path.join(root, 'trash');
+  const now = Date.now(), DAY = 86_400_000;
+  const file = (rel, ageDays, size = 10) => {
+    const f = path.join(root, rel);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, 'x'.repeat(size));
+    const t = new Date(now - ageDays * DAY);
+    fs.utimesSync(f, t, t);
+    return f;
+  };
+  const oldSnap = file('projects/a/output/browser/page-1.yml', 3);
+  const newSnap = file('projects/a/output/browser/page-2.yml', 1);
+  const oldVideo = file('projects/a/output/browser/rec.webm', 8);
+  const newVideo = file('projects/a/output/browser/rec2.webm', 5);
+  const oldWork = file('projects/a/work/tmp/frame.png', 20);
+  const newWork = file('projects/a/work/cut.mp4', 3);
+  const result = file('projects/a/output/final.mp4', 400);
+  const input = file('projects/a/input/source.mov', 400);
+  const shared = file('projects/shared-claude/work/notes.md', 400);
+  const busyWork = file('projects/busy/work/render.tmp', 30);
+  const trashOld = path.join(trashDir, 'alt-2025-01-01T10-00-00-000Z-files');
+  const trashNew = path.join(trashDir, `neu-${new Date(now - 2 * DAY).toISOString().replace(/[:.]/g, '-')}-files`);
+  for (const d of [trashOld, trashNew]) { fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'f'), 'x'); }
+  // identity profile: big cache (deleted) next to cookies/extensions (kept)
+  const prof = path.join(root, 'data', 'browsers', 'konto');
+  const cache = file('data/browsers/konto/Default/Cache/data_1', 1, 2048);
+  const cookies = file('data/browsers/konto/Default/Network/Cookies', 1, 2048);
+  const ext = file('data/browsers/konto/Default/Extensions/abc/1.0/manifest.json', 1, 2048);
+  const ctx = {
+    root,
+    config: { projectsDir, trashDir, cleanup: true, trashDays: 30, browserArtifactDays: 2, browserMediaDays: 7, workDays: 14, outputDays: 0, profileCacheMb: 0.001 },
+    runners: { peek: (id) => (id === 'busy' ? { state: 'running' } : null) },
+    browsers: { profiles: new Map([['konto', { name: 'Konto' }]]), running: new Map(), dir: () => prof, profileInUse: () => false },
+  };
+  const r = await new Janitor(ctx).run(now);
+  const gone = (f) => !fs.existsSync(f);
+  assert.ok(gone(oldSnap) && gone(oldVideo) && gone(oldWork) && gone(cache) && gone(trashOld), JSON.stringify(r.details));
+  for (const f of [newSnap, newVideo, newWork, result, input, shared, busyWork, cookies, ext, trashNew]) assert.ok(fs.existsSync(f), `fälschlich gelöscht: ${f}`);
+  assert.ok(!fs.existsSync(path.join(root, 'projects/a/work/tmp')), 'leere Ordner entfernt');
+  assert.ok(fs.existsSync(path.join(root, 'projects/a/work')), 'work/ selbst bleibt');
+  assert.ok(r.freed > 2048);
+  // a running browser's caches are never touched
+  const cache2 = file('data/browsers/konto/Default/Cache/data_2', 1, 2048);
+  ctx.browsers.running.set('konto', {});
+  await new Janitor(ctx).run(now);
+  assert.ok(fs.existsSync(cache2));
+  assert.equal(trashTime('x-2026-11-22T17-28-05-369Z-files'), Date.parse('2026-11-22T17:28:05.369Z'));
 });
 
 test('AsyncQueue delivers in order and ends on close', async () => {

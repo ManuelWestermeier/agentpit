@@ -8,6 +8,7 @@ import { Auth } from './auth.js';
 import { Browsers } from './browsers.js';
 import { CdpRelay } from './cdp-relay.js';
 import { Databases } from './databases.js';
+import { Janitor } from './janitor.js';
 import { Schedules } from './schedules.js';
 import { Git } from './git.js';
 import { GitHub } from './github.js';
@@ -68,6 +69,7 @@ async function main() {
   ctx.browsers = new Browsers(ctx);
   ctx.relay = new CdpRelay();
   ctx.schedules = new Schedules(ctx);
+  ctx.janitor = new Janitor(ctx);
   ctx.databases = new Databases(ctx);
   ctx.services = new Services(ctx);
   ctx.localUrl = `http://127.0.0.1:${port}`;
@@ -90,6 +92,7 @@ async function main() {
   await ctx.browsers.init();
   await ctx.relay.start();
   await ctx.schedules.init();
+  ctx.janitor.start();
   const security = createSecurity({ config: cfg, port });
   ctx.security = security;
   const localPreview = `http://127.0.0.1:${previewPort}/p/${security.previewToken}`;
@@ -298,6 +301,7 @@ async function main() {
     force.unref();
     ctx.usagePoller.stop();
     ctx.schedules.stop();
+    ctx.janitor.stop();
     ctx.auth.cancelLogin('Server beendet');
     ctx.github.cancel();
     await ctx.services.stopAll().catch(() => {});
