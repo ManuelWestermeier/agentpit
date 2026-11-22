@@ -5,14 +5,23 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency: # a newer push cancels the running check (saves Actions minutes)
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: ${{ matrix.os }} · Node ${{ matrix.node }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        node: [22, 24]
+        # macOS minutes count 10× in private repos → only once, with the recommended Node
+        include:
+          - { os: ubuntu-latest, node: 22 }
+          - { os: ubuntu-latest, node: 24 }
+          - { os: windows-latest, node: 22 }
+          - { os: windows-latest, node: 24 }
+          - { os: macos-latest, node: 24 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -50,16 +59,10 @@ jobs:
           curl -s http://localhost:4317/ | grep -q 'Cockpit einrichten' || { echo "::error::Einrichtungsseite fehlt"; exit 1; }
           kill $pid || true
 
-      - name: Install Chromium (ARM runner has no Chrome)
-        if: matrix.node == 24 && matrix.os == 'ubuntu-24.04-arm'
-        run: |
-          npm run install:browser
-          sudo env "PATH=$PATH" node node_modules/playwright-core/cli.js install-deps chromium
-
       - name: Browser end-to-end (headless + headed)
         if: matrix.node == 24
         shell: bash
         env:
-          E2E_ENGINE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'chromium' || 'chrome' }}
+          E2E_ENGINE: chrome
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run test:browser; else npm run test:browser; fi

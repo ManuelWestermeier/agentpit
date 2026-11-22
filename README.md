@@ -160,7 +160,7 @@ templates/default/  Projektvorlage (CLAUDE.md, Skills video/browser, Rechte)
 deploy/jetson/      Installationsskript Linux/Jetson
 test/               Unit-Tests (npm test), Mock-SDK
 ```
-Tests: `npm test` (Unit), `npm run test:browser` (echter Browser: Identität, Stream, Auto-Regelung; Linux ohne Bildschirm mit `xvfb-run -a`). Die GitHub-Actions-CI führt beides auf Windows, macOS, Linux x64 und Linux arm64 mit Node 22 und 24 aus.
+Tests: `npm test` (Unit), `npm run test:browser` (echter Browser: Identität, Stream, Auto-Regelung; Linux ohne Bildschirm mit `xvfb-run -a`). Die GitHub-Actions-CI führt beides bei jedem Push auf Windows, macOS und Linux aus (Node 22 und 24; macOS nur Node 24).
 
 Entwicklung: `COCKPIT_MOCK=1 npm start` (simulierte Sessions, keine Kosten); UI mit Hot Reload: Server mit `DEV_ORIGINS=http://localhost:5173`, Token-Link öffnen, `npm run dev:web`.
 
