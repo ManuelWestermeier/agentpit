@@ -1,3 +1,4 @@
+import { locale } from '../lib/i18n';
 import { useActive } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
@@ -47,7 +48,7 @@ export function Banners() {
       {limits?.warning && (
         <div className={`banner ${limits.warning.status === 'rejected' ? 'error' : 'warn'}`}>
           {limits.warning.status === 'rejected'
-            ? `Nutzungslimit erreicht${limits.warning.resetsAt ? ` – Reset ${new Date(limits.warning.resetsAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : ''}.`
+            ? `Nutzungslimit erreicht${limits.warning.resetsAt ? ` – Reset ${new Date(limits.warning.resetsAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}` : ''}.`
             : 'Nutzungslimit bald erreicht.'}
         </div>
       )}

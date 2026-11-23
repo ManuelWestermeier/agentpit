@@ -22,6 +22,7 @@ const SAFE_BROWSER_TOOLS = new Set([
 
 const cockpitAppend = ({ projectId, sharedDir, parentId }) => `# Umgebung: Agent Cockpit
 - Du läufst headless im "Agent Cockpit", einer lokalen Weboberfläche. Der Nutzer sieht Tool-Aufrufe, Befehle und Ausgaben live und erteilt Freigaben dort.
+- Antworte immer in der Sprache, in der der Nutzer schreibt (diese Anleitung ist nur zufällig deutsch). Always reply in the user's language.
 - Kein interaktives Terminal: Befehle dürfen nicht auf Eingaben warten (-y/--yes, kein Pager, kein Editor).
 - Ergebnisse (Video, Bild, Audio, PDF, HTML) nach ./output/ schreiben – das Cockpit zeigt sie dort als Vorschau. Uploads des Nutzers liegen in ./input/.
 - Lange Jobs (Renderings, Dev-Server) im Hintergrund starten, damit der Nutzer weiter steuern kann.

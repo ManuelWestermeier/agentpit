@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { create } from 'zustand';
 import { Timeline } from './timeline';
 import type { AuthSnapshot, BrowsersState, Catalog, GitHubSnapshot, Hello, HistoryResult, Limits, Project, RunnerStatus, Schedule, ServiceInfo, SessionInfo } from './types';
@@ -190,7 +191,7 @@ export const useStore = create<State>()((set, get) => {
         if (msg.projectId !== s.activeId || document.hidden) {
           get().toast('warn', text);
           try {
-            if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Cockpit', { body: text });
+            if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Cockpit', { body: t(text) });
           } catch { /* not supported */ }
         }
         return;

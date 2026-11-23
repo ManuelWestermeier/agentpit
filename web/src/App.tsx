@@ -1,3 +1,4 @@
+import { t } from './lib/i18n';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { SetupPassword } from './components/Access';
 import { AccountsDialog } from './components/AccountsDialog';
@@ -28,7 +29,7 @@ export function App() {
   const [showSide, setShowSide] = useState(false);
 
   useEffect(() => { init(); }, [init]);
-  useEffect(() => { document.title = pendingCount ? `(${pendingCount}) Freigabe – Cockpit` : 'Cockpit'; }, [pendingCount]);
+  useEffect(() => { document.title = pendingCount ? t(`(${pendingCount}) Freigabe – Cockpit`) : 'Cockpit'; }, [pendingCount]);
 
   if (!hello) {
     return (

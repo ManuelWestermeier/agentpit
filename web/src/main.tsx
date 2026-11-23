@@ -14,6 +14,9 @@ import './styles/views.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { startTranslator } from './lib/i18n';
+
+startTranslator();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

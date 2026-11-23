@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { GitFork, Globe, Plus, Settings, SquarePen, X } from 'lucide-react';
 import { useState } from 'react';
 
@@ -166,7 +167,7 @@ function SideFoot() {
       {hello.env.hints.filter((h) => !hidden.includes(h.key)).map((h) => {
         const job = hello.installs?.[h.key];
         return (
-          <div className="hint" key={h.key} title={h.why ? `${h.text} – ${h.why}` : h.text}>
+          <div className="hint" key={h.key} title={h.why ? `${t(h.text)} – ${t(h.why)}` : h.text}>
             <button className="hint-x" onClick={() => hide(h.key)} aria-label="Hinweis ausblenden" title="Ausblenden"><X size={11} /></button>
             <span>{h.text}</span>
             {h.install ? (

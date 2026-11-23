@@ -229,7 +229,8 @@ export function createSecurity({ config, port = config.port }) {
     res.setHeader('Referrer-Policy', 'same-origin'); // keeps Origin on same-origin form posts; nothing leaks to other sites
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     if (proto === 'https') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
-    const page = (status, html) => res.status(status).type('html').setHeader('Cache-Control', 'no-store').send(html);
+    const en = !/^\s*de\b/i.test(String(req.headers['accept-language'] ?? ''));
+    const page = (status, html) => res.status(status).type('html').setHeader('Cache-Control', 'no-store').setHeader('Vary', 'Accept-Language').send(en ? toEnglish(html) : html);
 
     // console link (proves access to the server console)
     if (req.method === 'GET' && typeof req.query.token === 'string') {
@@ -368,6 +369,35 @@ export function createSecurity({ config, port = config.port }) {
 }
 
 // ---- pages ------------------------------------------------------------------------
+/** Login/setup page in English for browsers that do not prefer German (longest phrases first). */
+const AUTH_EN = [
+  ['Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder', 'Choose the password that protects every access from now on – local, via a domain or a tunnel. The setup code is shown in the server console at start (or'],
+  ['Ein Passwortmanager-Passwort oder vier zufällige Wörter.', 'A password-manager password or four random words.'],
+  ['– sie wird nach erfolgreicher Anmeldung freigegeben.', '– it is allowed after a successful sign-in.'],
+  ['Einrichtungscode stimmt nicht (steht in der Server-Konsole bzw.', 'Wrong setup code (shown in the server console or via'],
+  ['Ungültiger oder veralteter Zugangslink.', 'Invalid or outdated access link.'],
+  ['Zu viele Versuche – eine Minute warten.', 'Too many attempts – wait a minute.'],
+  ['Noch kein Passwort – bitte einrichten.', 'No password yet – please set one up.'],
+  ['Passwörter stimmen nicht überein.', 'Passwords do not match.'],
+  ['Passwort ist bereits gesetzt.', 'Password is already set.'],
+  ['Bitte kein Passwort aus einem einzigen Zeichen.', 'Please do not use a password made of a single character.'],
+  ['Höchstens 256 Zeichen.', 'At most 256 characters.'],
+  ['Passwort setzen und anmelden', 'Set password and sign in'],
+  ['Cockpit einrichten', 'Set up the cockpit'],
+  ['Falsches Passwort.', 'Wrong password.'],
+  ['Einrichtungscode', 'Setup code'],
+  ['Neues Passwort', 'New password'],
+  ['Wiederholen', 'Repeat'],
+  ['Neue Adresse', 'New address'],
+  ['Zeichen.', 'characters.'],
+  ['Mindestens', 'At least'],
+  ['Einrichten', 'Setup'],
+  ['Anmelden', 'Sign in'],
+  ['Passwort', 'Password'],
+  ['lang="de"', 'lang="en"'],
+];
+const toEnglish = (html) => AUTH_EN.reduce((s, [de, en]) => s.split(de).join(en), html);
+
 function authPage({ mode, error = null, newHost = null }) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const setup = mode === 'setup';

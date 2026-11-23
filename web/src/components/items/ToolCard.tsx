@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Clapperboard, FilePen, FileText, Globe, ListChecks, Loader2, MessageCircleQuestion, Search, Sparkles, SquareTerminal, Wrench } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useStore } from '../../lib/store';
@@ -158,7 +159,7 @@ function browserView(item: ToolItem, action: string): View {
   return {
     icon: isVideo ? <Clapperboard size={14} /> : <Globe size={14} />,
     label: 'Browser',
-    summary: `${BROWSER_ACTIONS[action] ?? action}${summary ? ` · ${summary}` : ''}`,
+    summary: `${t(BROWSER_ACTIONS[action] ?? action)}${summary ? ` · ${summary}` : ''}`,
     body: <Output item={item} max={6000} />,
     thumb: firstImg?.url,
   };

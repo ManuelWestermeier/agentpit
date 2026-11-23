@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { ArrowDown, ArrowUp, GitBranch, RefreshCw, RotateCcw, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { fmtAgo } from '../lib/format';
@@ -77,7 +78,7 @@ export function GitView() {
           {files.map((f) => (
             <div key={f.path} className={`git-file${sel?.kind === 'file' && sel.id === f.path ? ' on' : ''}`}>
               <button onClick={() => setSel({ kind: 'file', id: f.path })} title={f.label}><span className={`gcode g-${f.code === '?' ? 'A' : f.code}`}>{f.code === '?' ? 'N' : f.code}</span>{f.path}</button>
-              <button className="btn ghost icon small" title="Änderung verwerfen" onClick={() => { if (window.confirm(`Änderungen an ${f.path} verwerfen?`)) run('discard', () => conn.call('git.discard', { projectId: pid, file: f.path })); }}><RotateCcw size={11} /></button>
+              <button className="btn ghost icon small" title="Änderung verwerfen" onClick={() => { if (window.confirm(t(`Änderungen an ${f.path} verwerfen?`))) run('discard', () => conn.call('git.discard', { projectId: pid, file: f.path })); }}><RotateCcw size={11} /></button>
             </div>
           ))}
           {!files.length && <div className="faint small-text">Alles committet.{project.autoCommit ? ' Auto-Commit nach jedem Turn ist an.' : ''}</div>}
@@ -116,7 +117,7 @@ export function GitView() {
           <>
             <div className="preview-bar">
               <span className="pname">{sel.kind === 'file' ? sel.id : sel.id.slice(0, 10)}</span>
-              {sel.kind === 'commit' && <button className="btn small" onClick={() => { if (window.confirm('Diesen Commit mit einem Gegen-Commit rückgängig machen?')) run('revert', () => conn.call('git.revert', { projectId: pid, hash: sel.id }), 'Rückgängig gemacht'); }}>Rückgängig machen</button>}
+              {sel.kind === 'commit' && <button className="btn small" onClick={() => { if (window.confirm(t('Diesen Commit mit einem Gegen-Commit rückgängig machen?'))) run('revert', () => conn.call('git.revert', { projectId: pid, hash: sel.id }), 'Rückgängig gemacht'); }}>Rückgängig machen</button>}
             </div>
             <div className="git-patch"><Patch text={patch} /></div>
           </>

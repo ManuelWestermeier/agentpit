@@ -1,3 +1,4 @@
+import { locale } from '../lib/i18n';
 import { Clock, Pause, Play, Plus, Trash2, Zap } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { fmtAgo } from '../lib/format';
@@ -6,7 +7,7 @@ import { act, useStore } from '../lib/store';
 import type { Schedule } from '../lib/types';
 import { conn } from '../lib/ws';
 
-const fmtTime = (t: number | null | undefined) => (t ? new Date(t).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–');
+const fmtTime = (t: number | null | undefined) => (t ? new Date(t).toLocaleString(locale, { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–');
 
 function when(s: Schedule) {
   if (s.kind === 'at') return `einmalig ${fmtTime(s.at)}`;

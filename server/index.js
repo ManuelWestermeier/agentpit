@@ -285,17 +285,21 @@ async function main() {
   });
 
   const url = `http://localhost:${port}/?token=${security.token}`;
+  // console in English unless the system runs in German
+  const de = /^de\b/i.test(process.env.LC_ALL || process.env.LANG || Intl.DateTimeFormat().resolvedOptions().locale || '');
+  const L = (deText, enText) => (de ? deText : enText);
   console.log(`\n  agentpit ${VERSION}`);
-  if (cfg.home !== ROOT) console.log(`  Daten: ${cfg.home}`);
+  if (cfg.home !== ROOT) console.log(`  ${L('Daten', 'Data')}: ${cfg.home}`);
   console.log(`  ${url}`);
   if (!security.hasPassword()) {
-    console.log(`  Ersteinrichtung: Passwort im Browser festlegen – Einrichtungscode ${security.setupCode()}`);
+    console.log(`  ${L('Ersteinrichtung: Passwort im Browser festlegen – Einrichtungscode', 'First run: set a password in the browser – setup code')} ${security.setupCode()}`);
   }
-  for (const u of cfg.publicUrls) console.log(`  Fernzugriff: ${u}`);
-  console.log(`  Projekte: ${cfg.projectsDir}`);
-  console.log(`  Claude Code ${env.claude.version ?? '?'}${env.claude.bundled ? ' (aus dem SDK)' : ''} · ffmpeg ${env.ffmpeg ?? 'fehlt'} · Browser ${env.browser.channel || 'keiner'} · Terminal ${env.pty ? 'ja' : 'nein'}`);
-  for (const h of env.hints) console.log(`  Hinweis: ${h.text}  →  ${h.cmd}`);
-  if (port !== config.port) console.log(`  (Port ${config.port} war belegt, nutze ${port})`);
+  for (const u of cfg.publicUrls) console.log(`  ${L('Fernzugriff', 'Remote access')}: ${u}`);
+  console.log(`  ${L('Projekte', 'Projects')}: ${cfg.projectsDir}`);
+  console.log(`  Claude Code ${env.claude.version ?? '?'}${env.claude.bundled ? L(' (aus dem SDK)', ' (bundled)') : ''} · ffmpeg ${env.ffmpeg ?? L('fehlt', 'missing')} · Browser ${env.browser.channel || L('keiner', 'none')} · Terminal ${env.pty ? L('ja', 'yes') : L('nein', 'no')}`);
+  if (de) for (const h of env.hints) console.log(`  Hinweis: ${h.text}  →  ${h.cmd}`);
+  else for (const h of env.hints) console.log(`  Hint: ${h.key} missing  →  ${h.cmd}`);
+  if (port !== config.port) console.log(`  (${L(`Port ${config.port} war belegt, nutze ${port}`, `port ${config.port} was busy, using ${port}`)})`);
 
   if (cfg.openBrowser) {
     import('open').then(({ default: open }) => open(url)).catch((e) => console.warn(`  Browser konnte nicht geöffnet werden: ${e.message}`));

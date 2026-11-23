@@ -1,3 +1,4 @@
+import { locale } from '../lib/i18n';
 import { ExternalLink, LogOut, RefreshCw } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useEscape } from '../lib/hooks';
@@ -25,7 +26,7 @@ export function LoginDialog() {
             Angemeldet{st.email || acct?.email ? ` als ${st.email ?? acct?.email}` : ''} · {st.authMethod}
             {acct?.subscriptionType ? ` · Plan ${acct.subscriptionType}` : ''}
             {acct?.organization ? ` · ${acct.organization}` : ''}
-            {st.loginExpiresAt ? ` · gültig bis ${new Date(st.loginExpiresAt).toLocaleDateString('de-DE')}` : ''}
+            {st.loginExpiresAt ? ` · gültig bis ${new Date(st.loginExpiresAt).toLocaleDateString(locale)}` : ''}
           </p>
         ) : (
           <p>

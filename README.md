@@ -1,80 +1,98 @@
-# agentpit
+<h1 align="center">agentpit</h1>
 
-**Run many Claude Code agents in parallel from one web cockpit – on your own machine, controlled from any device.**
+<p align="center"><b>Run many Claude Code agents in parallel from one web cockpit – on your machine, controlled from any device.</b><br>
+AI browser automation with real logged-in browsers · sub-agents and scheduled workflows · approvals that work in auto mode</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentpit"><img alt="npm" src="https://img.shields.io/npm/v/agentpit?color=f0a73a&label=npm"></a>
+  <a href="https://www.npmjs.com/package/agentpit"><img alt="downloads" src="https://img.shields.io/npm/dm/agentpit?color=2a78d6"></a>
+  <img alt="node" src="https://img.shields.io/node/v/agentpit">
+  <img alt="platforms" src="https://img.shields.io/badge/runs%20on-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-1baf7a">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/npm/l/agentpit"></a>
+</p>
 
 ```bash
 npx agentpit
 ```
 
-One command starts a local web app. Every project gets its own Claude Code session, its own folder and git repository, and – if you want – its own real browser with persistent logins. You watch every command and output live, approve what needs approval, and steer everything from your laptop or phone.
+![Claude drives a real, logged-in browser while you watch live](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/browser.jpg)
 
-[Deutsche Anleitung](https://unpkg.com/agentpit/README.de.md)
+One command starts a local web app. Every project gets its own Claude Code session, folder and git repository – and, if you want, its own **real browser with persistent logins** that Claude drives while you watch and can take over at any moment. Approve, steer and stop everything from your laptop or your phone.
 
-## What you get
+English and German interface (follows your browser) · [Deutsche Anleitung](https://cdn.jsdelivr.net/npm/agentpit@latest/README.de.md)
 
-- **Unlimited private sessions in parallel.** As many projects as you like, each with its own Claude Code session (official Claude Agent SDK). Sessions stay on your machine; nothing goes to a third-party server except the model calls themselves.
-- **AI browser use with persistent identities.** Each browser identity is its own Chromium/Chrome/Edge profile with separate cookies and logins that survive restarts. Claude drives it through Playwright MCP while you watch a live stream and can take over mouse and keyboard at any time – for 2FA, captchas or just to help. One session can switch between several identities mid-task (read with account A, post with account B).
-- **Remote from anywhere.** Password-protected, built to sit behind Tailscale, Cloudflare Tunnel or any HTTPS reverse proxy. The UI works on phones, including the remote browser view with touch and on-screen keyboard. Adaptive stream quality keeps lag low on mobile connections.
-- **Workflows and sub-agents.** Claude can start and steer other sessions (`session_create`, `session_send`, `session_wait` …), schedule prompts (once, every n minutes, cron) and hand work over through a shared folder. Example: research → cut clips → publish from several accounts, each step its own session.
-- **Access gate that works in auto mode.** Anything outside the project – another project's database or session, an unlinked browser identity – asks you first, even when the session runs fully autonomously. "Always allow" is remembered per project and revocable.
-- **Per-answer limits.** Cap each answer by cost, share of your 5-hour plan limit, time or number of steps; the answer is stopped when one is hit.
-- **Databases and charts.** SQLite, PostgreSQL and MySQL connections with schema browser and query console; Claude can create SQLite databases itself and turn query results into accessible bar, line, area and scatter charts (light and dark).
-- **Microservices.** Start dev servers and scripts per project with live logs, health checks, restart policy, ports and dependencies – one overview across all projects. Services can post prompts back into their session through a hook URL.
-- **Context that is never lost.** Every prompt, answer and summary is written to `context/` in the project; the context is compacted automatically at a threshold you choose.
-- **Usage forecast.** Plan limits (5 h, weekly, per model), cost per session and a preview of what the next prompt will cost.
-- **Files, git and GitHub.** File tree with preview (video, image, PDF, HTML), auto-commit after each task, diff, revert, push/pull and one-click "publish to GitHub".
-- **Titles write themselves.** Claude Haiku names projects and sessions from your prompts.
+## Why agentpit
 
-Interface language: German.
+| You want to … | agentpit gives you |
+|---|---|
+| run 5 agents at once instead of 5 terminal tabs | unlimited parallel sessions, each with its own project, history, cost and context meter |
+| let an agent use websites you are logged into | browser identities: separate Chromium/Chrome/Edge profiles with cookies that survive restarts, live view, remote mouse/keyboard |
+| check on agents from the couch | password-protected web UI built for Tailscale / Cloudflare Tunnel, phone-friendly, adaptive stream quality |
+| chain agents into workflows | sub-sessions (`session_create`, `session_send`, `session_wait`), cron schedules, a shared folder for hand-overs |
+| keep autonomy *and* control | auto mode, but anything outside the project (other DBs, sessions, logged-in identities) still asks first |
+| not burn your plan | per-answer limits (cost, % of 5-h limit, time, steps), live usage forecast |
 
-## Requirements
+## Features
 
-- Node.js **22.13 or newer** (24 LTS recommended)
-- A Claude login (Pro/Max subscription via the built-in login) or `ANTHROPIC_API_KEY`
-- Optional: git, ffmpeg (video), GitHub CLI – missing tools show a one-click install button (winget on Windows, Homebrew on macOS)
-- Browser identities use installed Chrome/Edge, or download Chromium with `npx agentpit install-browser`
+<img align="right" width="260" alt="agentpit on a phone" src="https://cdn.jsdelivr.net/npm/agentpit@latest/docs/phone.jpg">
 
-Runs on Windows, macOS and Linux (x64 and arm64, including Jetson boards).
+- **Unlimited private sessions.** Official Claude Agent SDK, one Claude Code process per project, everything stays on your machine.
+- **AI browser use with persistent identities.** Playwright MCP over CDP on real browser profiles; one session can switch identities mid-task (read with account A, post with account B). Logins, 2FA and captchas stay with you.
+- **Remote from anywhere.** Password, hashed sessions, rate limits, origin and DNS-rebinding checks; generated HTML is served from a separate origin.
+- **Workflows and sub-agents.** Sessions start and steer other sessions, schedules send prompts once, every n minutes or by cron.
+- **Access gate that works in auto mode.** "Always allow" is remembered per project and revocable.
+- **Per-answer limits** by cost, share of the 5-hour plan limit, time or steps.
+- **Databases and charts.** SQLite, PostgreSQL, MySQL with schema browser and query console; Claude creates SQLite databases and accessible bar/line/area/scatter charts.
+- **Microservices.** Dev servers and scripts with live logs, health checks, restart policy, ports and dependencies, across all projects; services can post prompts back to Claude.
+- **Context never lost.** Prompts, answers and summaries are written to `context/`; automatic compaction at your threshold.
+- **Files, git, GitHub.** Preview (video, image, PDF, HTML), auto-commit per task, diff, revert, push/pull, one-click private repo.
+- **One-click setup.** Missing ffmpeg, git or GitHub CLI? A button installs them (winget / Homebrew).
 
-## Usage
+<br clear="right">
+
+![Session with approvals, a question from Claude and a finished task](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/session.png)
+
+![Microservices with health checks and live logs](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/microservices.png)
+
+## Quick start
+
+Requirements: **Node.js 22.13+** and a Claude login (Pro/Max via the built-in sign-in) or `ANTHROPIC_API_KEY`. Windows, macOS and Linux (x64 and arm64).
 
 ```bash
 npx agentpit                      # start and open the browser
 npx agentpit --port 8080 --no-open
-npx agentpit link                 # print the login link and setup code (headless servers)
+npx agentpit link                 # login link + setup code (headless servers)
 npx agentpit set-password         # reset the password
 npx agentpit install-browser      # Chromium + ffmpeg for browser identities
+npm i -g agentpit && agentpit     # install permanently
 ```
 
-On first start you set a password in the browser. Data, projects and settings live in `~/.agentpit` (change with `--home <dir>` or `AGENTPIT_HOME`). Settings go into `~/.agentpit/.env` – see `.env.example` in the package for all options (runner limits, permission mode default, cleanup, auto-compaction …).
-
-Install permanently instead of `npx`:
-
-```bash
-npm i -g agentpit && agentpit
-```
+On first start you choose a password in the browser. Data, projects and settings live in `~/.agentpit` (`--home <dir>` or `AGENTPIT_HOME` to change). All options: `.env.example` in the package, copied to `~/.agentpit/.env`.
 
 ## Remote access
 
-The server only listens on `127.0.0.1`. To reach it from other devices, put a tunnel or HTTPS proxy in front of it on the same machine and pass its address:
+The server only listens on `127.0.0.1`. Put a tunnel in front of it on the same machine:
 
 ```bash
 tailscale serve --bg 4317           # private, only your devices
 npx agentpit --public-url https://my-box.tailnet-1234.ts.net
 ```
 
-Cloudflare Tunnel, devtunnel or nginx work the same way (the tunnel must pass WebSockets). File previews use a second origin on port + 1 so that generated HTML can never reach the cockpit's session.
+Cloudflare Tunnel, devtunnel or nginx work the same way (WebSockets must pass through).
 
 ## Security
 
-Whoever can open the cockpit can run commands on the machine – that is the point of it. So:
+Whoever can open the cockpit can run commands on the machine – that is the point of it. So: a password from the first start, "bypass permissions" locked unless `ALLOW_BYPASS_PERMISSIONS=true`, browser logins always done by you, database passwords kept in `~/.agentpit` – keep that folder private. Automated logins and scraping can violate the terms of the sites you use. agentpit is an interface for **your own** Claude Code with **your own** account; if you offer it to others, use an API key.
 
-- a password is required from the first start (sessions stored hashed, rate-limited logins, origin checks, DNS-rebinding protection);
-- "bypass permissions" mode is locked unless you set `ALLOW_BYPASS_PERMISSIONS=true`;
-- browser logins, passwords and 2FA are always done by you, never handed to Claude;
-- database passwords are stored in plain text in the data folder – keep `~/.agentpit` private.
+## FAQ
 
-Automated logins and scraping can violate the terms of the sites you use. agentpit is an interface for **your own** Claude Code with **your own** account; if you offer it to others, switch to an API key.
+**Is this a Claude Code GUI / web UI?** Yes – a self-hosted web interface for Claude Code (via the official Agent SDK) that manages many sessions at once and adds browser automation, workflows and remote access.
+
+**Does it work with my Claude Pro/Max subscription?** Yes, sign in from the UI. An Anthropic API key works too.
+
+**How is this different from Claude in Chrome?** Claude in Chrome lives in your desktop Chrome. agentpit runs headless or windowed browser profiles on the machine running the cockpit (also a server), streams them to any device and lets several sessions use several identities.
+
+**Can it run 24/7 on a home server?** Yes – it is built for Linux servers (an install script for NVIDIA Jetson is in the repo); browsers get a virtual display automatically when there is no screen.
 
 ## License
 

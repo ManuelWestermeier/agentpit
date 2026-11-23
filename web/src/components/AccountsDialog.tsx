@@ -4,6 +4,7 @@ import { useEscape } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
 import { AccessSection } from './Access';
+import { langSetting, setLang } from '../lib/i18n';
 
 /** Claude login, GitHub login and remote-access status in one place. */
 export function AccountsDialog() {
@@ -17,6 +18,15 @@ export function AccountsDialog() {
         <GitHubSection />
         <hr className="modal-sep" />
         <AccessSection />
+        <hr className="modal-sep" />
+        <section>
+          <label className="label" htmlFor="ui-lang">Sprache der Oberfläche</label>
+          <select id="ui-lang" className="select" style={{ maxWidth: 260 }} defaultValue={langSetting()} onChange={(e) => setLang(e.target.value as 'de' | 'en' | 'auto')}>
+            <option value="auto">Automatisch (Browser)</option>
+            <option value="en" data-i18n-skip>English</option>
+            <option value="de" data-i18n-skip>Deutsch</option>
+          </select>
+        </section>
         <div className="modal-actions"><button className="btn ghost" onClick={close}>Schließen</button></div>
       </div>
     </div>

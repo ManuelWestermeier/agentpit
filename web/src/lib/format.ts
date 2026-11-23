@@ -1,10 +1,11 @@
-const usd = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const usdFine = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'USD', minimumFractionDigits: 3, maximumFractionDigits: 3 });
-const num1 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
-const num0 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
-const time = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
-const dayTime = new Intl.DateTimeFormat('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-const date = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+import { locale } from './i18n';
+const usd = new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usdFine = new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const num1 = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+const num0 = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
+const dayTime = new Intl.DateTimeFormat(locale, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const date = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export const fmtUsd = (v: number | null | undefined) => {
   if (v == null || !Number.isFinite(v)) return '–';
@@ -20,7 +21,7 @@ export const fmtTokens = (v: number | null | undefined) => {
 };
 
 export const fmtPct = (v: number | null | undefined, digits = 0) =>
-  v == null || !Number.isFinite(v) ? '–' : `${v.toLocaleString('de-DE', { maximumFractionDigits: digits })} %`;
+  v == null || !Number.isFinite(v) ? '–' : `${v.toLocaleString(locale, { maximumFractionDigits: digits })} %`;
 
 export const fmtDuration = (ms: number | null | undefined) => {
   if (ms == null || !Number.isFinite(ms)) return '–';

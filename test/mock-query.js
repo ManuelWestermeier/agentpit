@@ -98,22 +98,22 @@ function mockQuery({ prompt, options }) {
       return;
     }
 
-    await stream('Ich prüfe zuerst die Werkzeuge, öffne dann die Seite im Browser und baue daraus ein kurzes Video. Den Plan halte ich als Aufgabenliste fest.');
+    await stream('I will check the tools first, then open the page in the browser and turn it into a short video. I am tracking the plan as a task list.');
     const todo = { __id: `toolu_${randomUUID().slice(0, 8)}`, todos: [
-      { content: 'ffmpeg prüfen', activeForm: 'Prüfe ffmpeg', status: 'completed' },
-      { content: 'Seite aufnehmen', activeForm: 'Nehme Seite auf', status: 'in_progress' },
-      { content: 'Video schneiden', activeForm: 'Schneide Video', status: 'pending' },
+      { content: 'Check ffmpeg', activeForm: 'Checking ffmpeg', status: 'completed' },
+      { content: 'Record the page', activeForm: 'Recording the page', status: 'in_progress' },
+      { content: 'Cut the video', activeForm: 'Cutting the video', status: 'pending' },
     ] };
     assistant([{ type: 'tool_use', id: todo.__id, name: 'TodoWrite', input: todo }]);
-    toolResult(todo.__id, 'Todos aktualisiert');
+    toolResult(todo.__id, 'Todos updated');
 
     const bashId = `toolu_${randomUUID().slice(0, 8)}`;
-    const bashInput = { command: 'ffmpeg -hide_banner -version | head -1', description: 'ffmpeg-Version prüfen', __id: bashId };
+    const bashInput = { command: 'ffmpeg -hide_banner -version | head -1', description: 'Check ffmpeg version', __id: bashId };
     assistant([{ type: 'tool_use', id: bashId, name: 'Bash', input: bashInput }]);
-    const perm = await ask('Bash', bashInput, { title: 'Claude möchte einen Befehl ausführen', suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ffmpeg *' }], behavior: 'allow', destination: 'localSettings' }] });
+    const perm = await ask('Bash', bashInput, { title: 'Claude wants to run a command', suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ffmpeg *' }], behavior: 'allow', destination: 'localSettings' }] });
     if (perm.behavior === 'deny') {
       toolResult(bashId, perm.message, { isError: true });
-      await stream(`Verstanden, ich lasse ffmpeg weg. (${perm.message})`);
+      await stream(`Understood, I will skip ffmpeg. (${perm.message})`);
     } else {
       for (let s = 1; s <= 2; s++) { await sleep(500); emit({ type: 'tool_progress', tool_use_id: bashId, tool_name: 'Bash', parent_tool_use_id: null, elapsed_time_seconds: s }); }
       toolResult(bashId, 'ffmpeg version 7.1.1-full_build-www.gyan.dev', { structured: { stdout: 'ffmpeg version 7.1.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers\n', stderr: '', interrupted: false } });
@@ -121,44 +121,44 @@ function mockQuery({ prompt, options }) {
     if (interrupted) return finish(started, true);
 
     const navId = `toolu_${randomUUID().slice(0, 8)}`;
-    const nav = { url: 'https://example.org/baeckerei', __id: navId };
+    const nav = { url: 'https://example.org/bakery', __id: navId };
     assistant([{ type: 'tool_use', id: navId, name: 'mcp__playwright__browser_navigate', input: nav }]);
     await ask('mcp__playwright__browser_navigate', nav);
     await sleep(600);
-    toolResult(navId, [{ type: 'text', text: '### Page\n- URL: https://example.org/baeckerei\n- Title: Bergwerk Bäckerei' }]);
+    toolResult(navId, [{ type: 'text', text: '### Page\n- URL: https://example.org/bakery\n- Title: Mountain Bakery' }]);
 
     const shotId = `toolu_${randomUUID().slice(0, 8)}`;
-    assistant([{ type: 'tool_use', id: shotId, name: 'mcp__playwright__browser_take_screenshot', input: { filename: 'output/browser/startseite.png' } }]);
+    assistant([{ type: 'tool_use', id: shotId, name: 'mcp__playwright__browser_take_screenshot', input: { filename: 'output/browser/home.png' } }]);
     await sleep(500);
-    toolResult(shotId, [{ type: 'text', text: 'Screenshot gespeichert: output/browser/startseite.png' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: SHOT() } }]);
+    toolResult(shotId, [{ type: 'text', text: 'Screenshot saved: output/browser/home.png' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: SHOT() } }]);
 
     const outDir = path.join(options.cwd, 'output');
     fs.mkdirSync(path.join(outDir, 'browser'), { recursive: true });
-    fs.copyFileSync(path.join(FIX, 'screenshot.png'), path.join(outDir, 'browser', 'startseite.png'));
+    fs.copyFileSync(path.join(FIX, 'screenshot.png'), path.join(outDir, 'browser', 'home.png'));
 
     const qId = `toolu_${randomUUID().slice(0, 8)}`;
-    const qInput = { __id: qId, questions: [{ question: 'Welches Format soll das Video haben?', header: 'Format', multiSelect: false, options: [{ label: '16:9, 1080p', description: 'YouTube, Website' }, { label: '9:16, 1080×1920', description: 'Reels, TikTok, Shorts' }] }] };
+    const qInput = { __id: qId, questions: [{ question: 'Which format should the video have?', header: 'Format', multiSelect: false, options: [{ label: '16:9, 1080p', description: 'YouTube, Website' }, { label: '9:16, 1080×1920', description: 'Reels, TikTok, Shorts' }] }] };
     assistant([{ type: 'tool_use', id: qId, name: 'AskUserQuestion', input: qInput }]);
     const ans = await ask('AskUserQuestion', qInput);
-    const answer = ans.behavior === 'allow' ? Object.values(ans.updatedInput.answers ?? {}).join(', ') : 'selbst gewählt: 16:9';
-    toolResult(qId, `Antwort: ${answer}`);
+    const answer = ans.behavior === 'allow' ? Object.values(ans.updatedInput.answers ?? {}).join(', ') : 'chosen myself: 16:9';
+    toolResult(qId, `Answer: ${answer}`);
     if (interrupted) return finish(started, true);
 
     const editId = `toolu_${randomUUID().slice(0, 8)}`;
-    assistant([{ type: 'tool_use', id: editId, name: 'Edit', input: { file_path: path.join(options.cwd, 'CLAUDE.md'), old_string: '- Videoformat: offen', new_string: `- Videoformat: ${answer}\n- Länge: 15 s` } }]);
-    toolResult(editId, 'Datei aktualisiert');
+    assistant([{ type: 'tool_use', id: editId, name: 'Edit', input: { file_path: path.join(options.cwd, 'CLAUDE.md'), old_string: '- Videoformat: offen', new_string: `- Videoformat: ${answer}\n- Length: 15 s` } }]);
+    toolResult(editId, 'File updated');
 
     const renderId = `toolu_${randomUUID().slice(0, 8)}`;
-    const render = { command: 'ffmpeg -y -framerate 30 -i output/frames/%04d.jpg -c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p output/promo.mp4', description: 'Video rendern', __id: renderId };
+    const render = { command: 'ffmpeg -y -framerate 30 -i output/frames/%04d.jpg -c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p output/promo.mp4', description: 'Render video', __id: renderId };
     assistant([{ type: 'tool_use', id: renderId, name: 'Bash', input: render }]);
-    const p2 = await ask('Bash', render, { title: 'Claude möchte das Video rendern' });
+    const p2 = await ask('Bash', render, { title: 'Claude wants to render the video' });
     if (p2.behavior === 'allow') {
       for (let s = 1; s <= 3; s++) { await sleep(400); emit({ type: 'tool_progress', tool_use_id: renderId, tool_name: 'Bash', parent_tool_use_id: null, elapsed_time_seconds: s }); }
       fs.copyFileSync(path.join(FIX, 'demo.mp4'), path.join(outDir, 'promo.mp4'));
       toolResult(renderId, '', { structured: { stdout: '', stderr: 'frame=  450 fps=212 q=-1.0 Lsize=    1873kB time=00:00:15.00 bitrate=1022.8kbits/s speed=7.05x\n', interrupted: false } });
     } else toolResult(renderId, p2.message, { isError: true });
 
-    await stream(`Fertig: **output/promo.mp4** (${answer}, 15 s). Der Screenshot liegt unter \`output/browser/startseite.png\`.\n\n| Datei | Größe |\n|---|---|\n| promo.mp4 | 1,8 MB |\n| startseite.png | 36 KB |`);
+    await stream(`Done: **output/promo.mp4** (${answer}, 15 s). The screenshot is in \`output/browser/home.png\`.\n\n| File | Size |\n|---|---|\n| promo.mp4 | 1.8 MB |\n| home.png | 36 KB |`);
     finish(started, false);
   }
 

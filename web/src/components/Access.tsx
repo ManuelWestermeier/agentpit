@@ -1,3 +1,4 @@
+import { locale } from '../lib/i18n';
 import { Globe, KeyRound, LogOut, Monitor, ShieldCheck, Smartphone, X } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { fmtAgo } from '../lib/format';
@@ -84,7 +85,7 @@ export function AccessSection() {
     <section>
       <h3><KeyRound size={14} /> Zugriff</h3>
       <p className="small-text">
-        {st?.hasPassword ? <>Passwortschutz aktiv{st.passwordAt ? ` seit ${new Date(st.passwordAt).toLocaleDateString('de-DE')}` : ''}. </> : 'Noch kein Passwort. '}
+        {st?.hasPassword ? <>Passwortschutz aktiv{st.passwordAt ? ` seit ${new Date(st.passwordAt).toLocaleDateString(locale)}` : ''}. </> : 'Noch kein Passwort. '}
         Neue Adressen (Domain, Tunnel) werden freigegeben, sobald du dich dort mit dem Passwort anmeldest.
       </p>
 

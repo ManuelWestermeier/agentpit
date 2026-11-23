@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { fmtClock, fmtDuration, fmtTokens, fmtUsd, shortModel } from '../../lib/format';
+import { t } from '../../lib/i18n';
 import { act, useStore } from '../../lib/store';
 import type { Item } from '../../lib/timeline';
 import { conn } from '../../lib/ws';
@@ -68,7 +69,7 @@ function UserPrompt({ text, uuid, queued }: { text: string; uuid?: string; queue
     if (!dry.canRewind) { useStore.getState().toast('warn', dry.error ?? 'Für diesen Prompt gibt es keinen Dateistand.'); return; }
     const files = dry.filesChanged ?? [];
     if (!files.length) { useStore.getState().toast('info', 'Seit diesem Prompt wurden keine Dateien über Edit/Write geändert.'); return; }
-    const ok = window.confirm(`Dateien auf den Stand vor diesem Prompt zurücksetzen?\n\n${files.slice(0, 15).join('\n')}${files.length > 15 ? `\n… und ${files.length - 15} weitere` : ''}\n\n+${dry.insertions ?? 0} / −${dry.deletions ?? 0} Zeilen. Änderungen per Bash werden nicht erfasst.`);
+    const ok = window.confirm(`${t('Dateien auf den Stand vor diesem Prompt zurücksetzen?')}\n\n${files.slice(0, 15).join('\n')}${files.length > 15 ? `\n${t(`… und ${files.length - 15} weitere`)}` : ''}\n\n${t(`+${dry.insertions ?? 0} / −${dry.deletions ?? 0} Zeilen. Änderungen per Bash werden nicht erfasst.`)}`);
     if (ok) await act(() => conn.call('rewind', { projectId, userMessageId: uuid, dryRun: false }), 'Dateien zurückgesetzt');
   };
   return (
