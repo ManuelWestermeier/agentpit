@@ -25,9 +25,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
 
@@ -56,7 +56,8 @@ jobs:
           done
           cat server.log
           [ "$code" = "401" ] || { echo "::error::/api/health antwortet $code statt 401"; exit 1; }
-          curl -s http://localhost:4317/ | grep -q 'Cockpit einrichten' || { echo "::error::Einrichtungsseite fehlt"; exit 1; }
+          curl -s -H 'Accept-Language: de-DE' http://localhost:4317/ | grep -q 'Cockpit einrichten' || { echo "::error::Einrichtungsseite (de) fehlt"; exit 1; }
+          curl -s -H 'Accept-Language: en-US' http://localhost:4317/ | grep -q 'Set up the cockpit' || { echo "::error::setup page (en) missing"; exit 1; }
           kill $pid || true
 
       - name: Browser end-to-end (headless + headed)
