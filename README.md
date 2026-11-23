@@ -15,7 +15,9 @@ AI browser automation with real logged-in browsers · sub-agents and scheduled w
 npx agentpit
 ```
 
-![Claude drives a real, logged-in browser while you watch live](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/browser.jpg)
+![A real session: Claude opens Hacker News in a linked browser identity, finds the top AI story and summarises it – you watch both side by side](https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/docs/demo.gif)
+
+<sub>Real recording, sped up. [MP4](https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/docs/demo.mp4) · the prompt was “Open news.ycombinator.com, find the top story about AI and give me a 3-bullet summary.”</sub>
 
 One command starts a local web app. Every project gets its own Claude Code session, folder and git repository – and, if you want, its own **real browser with persistent logins** that Claude drives while you watch and can take over at any moment. Approve, steer and stop everything from your laptop or your phone.
 
@@ -49,6 +51,8 @@ English and German interface (follows your browser) · [Deutsche Anleitung](http
 - **One-click setup.** Missing ffmpeg, git or GitHub CLI? A button installs them (winget / Homebrew).
 
 <br clear="right">
+
+![Claude drives a real, logged-in browser while you watch live](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/browser.jpg)
 
 ![Session with approvals, a question from Claude and a finished task](https://cdn.jsdelivr.net/npm/agentpit@latest/docs/session.png)
 
