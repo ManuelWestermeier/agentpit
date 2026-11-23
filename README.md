@@ -48,6 +48,7 @@ English and German interface (follows your browser) · [Deutsche Anleitung](http
 - **Microservices.** Dev servers and scripts with live logs, health checks, restart policy, ports and dependencies, across all projects; services can post prompts back to Claude.
 - **Context never lost.** Prompts, answers and summaries are written to `context/`; automatic compaction at your threshold.
 - **Files, git, GitHub.** Preview (video, image, PDF, HTML), auto-commit per task, diff, revert, push/pull, one-click private repo.
+- **Ready-made workflows.** A new session offers one-click tasks: monitor a website, research → video → post, daily briefing, collect & chart data, build & run an app, triage your inbox.
 - **One-click setup.** Missing ffmpeg, git or GitHub CLI? A button installs them (winget / Homebrew).
 
 <br clear="right">

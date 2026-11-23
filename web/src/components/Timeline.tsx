@@ -1,9 +1,10 @@
-import { ArrowDown, Loader2 } from 'lucide-react';
+import { ArrowDown, ChartColumn, Code, Loader2, Mail, Newspaper, Radar, Workflow } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fmtDuration } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { useStore, type Filter } from '../lib/store';
 import type { Item, ToolItem } from '../lib/timeline';
+import { TEMPLATES } from '../lib/templates';
 import { ItemRow } from './items/ItemRow';
 import { Markdown } from './items/Markdown';
 
@@ -134,10 +135,36 @@ function Working() {
   );
 }
 
+const TEMPLATE_ICON: Record<string, ReactNode> = {
+  radar: <Radar size={15} />, workflow: <Workflow size={15} />, newspaper: <Newspaper size={15} />,
+  chart: <ChartColumn size={15} />, code: <Code size={15} />, mail: <Mail size={15} />,
+};
+
+/** Empty session: ready-made tasks – a click puts the prompt into the composer and selects the first «…» to fill in. */
 function EmptyState() {
   const { project } = useActive();
+  const use = (prompt: string) => {
+    if (!project) return;
+    useStore.setState((s) => ({ draft: { ...s.draft, [project.id]: prompt } }));
+    requestAnimationFrame(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>('.composer-box textarea');
+      if (!ta) return;
+      ta.focus();
+      const a = prompt.indexOf('«'), b = prompt.indexOf('»', a);
+      if (a >= 0 && b > a) ta.setSelectionRange(a, b + 1);
+    });
+  };
   return (
-    <div className="empty">
+    <div className="empty templates-empty">
+      <div className="templates" data-i18n-skip>
+        {TEMPLATES.map((t) => (
+          <button key={t.id} className="template" onClick={() => use(t.prompt)} title={t.prompt}>
+            <span className="template-icon">{TEMPLATE_ICON[t.icon]}</span>
+            <span className="template-title">{t.title}</span>
+            <span className="template-desc">{t.desc}</span>
+          </button>
+        ))}
+      </div>
       <p className="faint">Ergebnisse landen in <code title={project?.dir}>output/</code>.</p>
     </div>
   );
