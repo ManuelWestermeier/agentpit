@@ -15,7 +15,7 @@ AI browser automation with real logged-in browsers · sub-agents and scheduled w
 npx agentpit
 ```
 
-![agentpit in 8 seconds: give Claude a task, it uses your logged-in browser and reports back – plus one-click workflows, dev servers, usage limits and phone control](https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/docs/demo.gif)
+![agentpit in 13 seconds: type a task, Claude works in your logged-in browser and comes back with the answer – plus one-click workflows, dev servers, plan limits and phone control](https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/docs/demo.gif)
 
 <sub>Recorded from a real session. [Full 25 s walkthrough with captions (MP4)](https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/docs/demo-full.mp4)</sub>
 
