@@ -119,6 +119,14 @@ export function ProfileDialog({ id, onClose }: { id: string | null; onClose: () 
           <p className="stream-hint">Tipp gegen Bot-Erkennung: Sprache und Zeitzone sollten zum Standort der IP-Adresse passen (ohne Proxy also „auto“ lassen).</p>
         </details>
 
+        {id && status?.mcpCmd && (
+          <details className="adv">
+            <summary>In Claude Code verwenden <span className="muted">– auch ohne Cockpit</span></summary>
+            <code className="mono" data-i18n-skip style={{ display: 'block', padding: '8px 10px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 6, overflowX: 'auto', whiteSpace: 'nowrap', userSelect: 'all' }}>{`claude mcp add browser-${id} -- ${status.mcpCmd} ${id}`}</code>
+            <p className="stream-hint">Claude Code (Terminal, Desktop, IDE) steuert dann genau diese Identität in einem sichtbaren Fenster – mit ihren Logins. Läuft das Cockpit, nutzen beide denselben Browser.</p>
+          </details>
+        )}
+
         {f.engine === 'chromium' && !status?.bundled && <InstallBox />}
         <p style={{ marginTop: 12 }}>Für Google-Logins Chrome bevorzugen und sichtbar starten, falls Google den Login blockiert. Anmeldedaten tippst du selbst – Claude tippt keine Passwörter ein.</p>
         <div className="modal-actions">

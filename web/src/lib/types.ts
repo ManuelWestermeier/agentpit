@@ -231,7 +231,7 @@ export interface StreamStats {
 }
 export interface BrowsersState {
   profiles: BrowserProfile[];
-  status: { bundled: boolean; chrome: boolean; msedge: boolean; path: string; install: { state: string; lines: string[] }; defaultHeadless: boolean; virtualDisplay: boolean };
+  status: { bundled: boolean; chrome: boolean; msedge: boolean; path: string; install: { state: string; lines: string[] }; defaultHeadless: boolean; virtualDisplay: boolean; mcpCmd?: string };
 }
 export interface GitHubSnapshot {
   status: { installed: boolean; loggedIn: boolean; login?: string; name?: string; email?: string; error?: string | null } | null;

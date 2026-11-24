@@ -5,6 +5,7 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
+import { HOME, ROOT } from './config.js';
 import { findBrowserExecutable, playwrightMcpCli } from './environment.js';
 import { UserError, slugify, stripAnsi, throttle, withTimeout } from './util.js';
 
@@ -1060,7 +1061,9 @@ export class Browsers extends EventEmitter {
   }
 
   status() {
-    return { bundled: !!findBrowserExecutable('chromium'), chrome: !!findBrowserExecutable('chrome'), msedge: !!findBrowserExecutable('msedge'), install: this.install, path: process.env.PLAYWRIGHT_BROWSERS_PATH, defaultHeadless: this.defaultHeadless(), virtualDisplay: !hasScreen() };
+    return { bundled: !!findBrowserExecutable('chromium'), chrome: !!findBrowserExecutable('chrome'), msedge: !!findBrowserExecutable('msedge'), install: this.install, path: process.env.PLAYWRIGHT_BROWSERS_PATH, defaultHeadless: this.defaultHeadless(), virtualDisplay: !hasScreen(),
+      // command that gives Claude Code (outside the cockpit) one identity as MCP server
+      mcpCmd: HOME === ROOT ? `node "${path.join(ROOT, 'bin', 'agentpit.js')}" mcp` : 'npx -y agentpit mcp' };
   }
 }
 

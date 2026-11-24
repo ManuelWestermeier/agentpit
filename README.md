@@ -40,6 +40,7 @@ English and German interface (follows your browser) · [Deutsche Anleitung](http
 
 - **Unlimited private sessions.** Official Claude Agent SDK, one Claude Code process per project, everything stays on your machine.
 - **AI browser use with persistent identities.** Playwright MCP over CDP on real browser profiles; one session can switch identities mid-task (read with account A, post with account B). Logins, 2FA and captchas stay with you.
+- **Identities in plain Claude Code too.** `claude mcp add work -- npx -y agentpit mcp work` gives Claude Code, Claude Desktop or any MCP client one identity as a visible, logged-in browser – with or without the cockpit running. Only need isolated browsers? [browserpit](https://github.com/ManuelWestermeier/browserpit).
 - **Remote from anywhere.** Password, hashed sessions, rate limits, origin and DNS-rebinding checks; generated HTML is served from a separate origin.
 - **Workflows and sub-agents.** Sessions start and steer other sessions, schedules send prompts once, every n minutes or by cron.
 - **Access gate that works in auto mode.** "Always allow" is remembered per project and revocable.
@@ -69,6 +70,7 @@ npx agentpit --port 8080 --no-open
 npx agentpit link                 # login link + setup code (headless servers)
 npx agentpit set-password         # reset the password
 npx agentpit install-browser      # Chromium + ffmpeg for browser identities
+npx agentpit mcp <identity>       # one browser identity as MCP server for Claude Code
 npm i -g agentpit && agentpit     # install permanently
 ```
 

@@ -16,6 +16,8 @@ Usage
   npx agentpit link               print the login link and setup code
   npx agentpit set-password       set a new password (signs everyone out)
   npx agentpit install-browser    download Chromium + ffmpeg for browser identities
+  npx agentpit mcp <identity>     a browser identity as MCP server for Claude Code
+                                  (claude mcp add work -- npx -y agentpit mcp work)
 
 Options
   --port <n>        HTTP port (default 4317, preview uses port + 1)
@@ -28,6 +30,7 @@ Options
 Settings: <home>/.env (see .env.example in the package). Needs Claude Code login or ANTHROPIC_API_KEY.`;
 
 const args = process.argv.slice(2);
+if (args[0] === 'mcp') { await import('../scripts/mcp.mjs'); } else {
 const cmds = { link: '../scripts/link.mjs', 'set-password': '../scripts/set-password.mjs', 'install-browser': '../scripts/install-browser.mjs' };
 let cmd = null;
 for (let i = 0; i < args.length; i++) {
@@ -49,3 +52,4 @@ for (let i = 0; i < args.length; i++) {
 }
 
 await import(cmd ? cmds[cmd] : '../server/index.js');
+}
