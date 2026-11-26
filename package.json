@@ -1,6 +1,6 @@
 {
   "name": "agentpit",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Self-hosted web cockpit for Claude Code: run unlimited parallel AI agents, let them drive real logged-in browsers, chain sub-agents and cron workflows, control everything remotely from your phone.",
   "keywords": [
     "claude-code",

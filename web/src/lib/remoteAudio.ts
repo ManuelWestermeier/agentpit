@@ -4,6 +4,7 @@ import { conn } from './ws';
 const MIC_RATE = 24_000; // server/audio.js MIC_RATE
 const MIME = 'audio/mp4; codecs="mp4a.40.2"'; // Linux/PulseAudio path
 const WEBM = 'audio/webm; codecs="opus"'; // tab capture through the extension
+const SOUND_KEY = 'cockpit.sound';
 
 type MS = typeof MediaSource;
 const MediaSourceImpl: MS | undefined = (window as unknown as { ManagedMediaSource?: MS }).ManagedMediaSource ?? window.MediaSource;
@@ -15,7 +16,15 @@ const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
  * buffer runs ahead, playback jumps to the live edge instead of drifting behind the picture.
  */
 export function useRemoteAudio(profileId: string) {
-  const [sound, setSound] = useState(false);
+  // sound is on by default (remembered per device); browsers only play after a click, so a blocked
+  // start waits for the first click or key into the page
+  const [sound, setSoundState] = useState(() => { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch { return true; } });
+  const setSound = (v: boolean | ((x: boolean) => boolean)) => setSoundState((cur) => {
+    const next = typeof v === 'function' ? v(cur) : v;
+    try { localStorage.setItem(SOUND_KEY, next ? '1' : '0'); } catch { /* storage blocked */ }
+    return next;
+  });
+  const [blocked, setBlocked] = useState(false);
   const [mic, setMic] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -23,11 +32,17 @@ export function useRemoteAudio(profileId: string) {
 
   useEffect(() => {
     if (!sound) return;
-    if (!MediaSourceImpl) { setError('Dieser Browser kann den Ton nicht abspielen.'); setSound(false); return; }
+    if (!MediaSourceImpl) { setError('Dieser Browser kann den Ton nicht abspielen.'); setSoundState(false); return; }
     const el = new Audio();
     (el as HTMLAudioElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
     audio.current = el;
     let alive = true;
+    // what this browser plays: Opus/WebM (Chrome, Edge, Firefox) or AAC/MP4 (Safari, iPhone – converted on the server)
+    const codec = MediaSourceImpl.isTypeSupported(WEBM) ? 'webm' : 'mp4';
+    const play = () => el.play().then(() => setBlocked(false), (err) => { if (err?.name === 'NotAllowedError') setBlocked(true); });
+    const unlock = () => { if (el.src) play(); };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
     let ms: MediaSource | null = null;
     let sb: SourceBuffer | null = null;
     let queue: Uint8Array[] = [];
@@ -40,7 +55,7 @@ export function useRemoteAudio(profileId: string) {
       const end = el.buffered.end(el.buffered.length - 1);
       if (end - el.currentTime > 0.6) el.currentTime = Math.max(0, end - 0.15); // stay at the live edge
       if (!sb.updating && el.currentTime > 30) { try { sb.remove(0, el.currentTime - 10); } catch { /* busy */ } }
-      if (el.paused) el.play().catch(() => {});
+      if (el.paused) play();
     };
     // every recording start (new tab, new listener) brings a new header: start a fresh pipeline with it
     const begin = (codec: string, init: Uint8Array) => {
@@ -57,7 +72,7 @@ export function useRemoteAudio(profileId: string) {
         sb.addEventListener('updateend', () => { pump(); live(); });
         pump();
       });
-      el.play().catch(() => {});
+      play();
     };
     const off = conn.onMessage((m) => {
       if (m.t !== 'bmedia' || m.profileId !== profileId || m.kind !== 'audio') return;
@@ -65,10 +80,20 @@ export function useRemoteAudio(profileId: string) {
       if (m.init) begin(m.codec ?? 'mp4', b64(m.init));
       else if (m.data && (sb || queue.length)) { queue.push(b64(m.data)); if (queue.length > 40) queue.splice(1, queue.length - 20); pump(); }
     });
-    conn.call('browsers.audio', { id: profileId, on: true }).catch((e) => { if (alive) { setError(e.message); setSound(false); } });
+    // not running yet / just starting: ask again until the browser is there (the server waits for the extension)
+    let retry = 0;
+    const ask = () => conn.call('browsers.audio', { id: profileId, on: true, codec }).catch((e) => {
+      if (!alive) return;
+      if (/läuft nicht/.test(e.message) && retry++ < 30) { setTimeout(ask, 2000); return; }
+      setError(e.message);
+    });
+    ask();
     return () => {
       alive = false;
       off();
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+      setBlocked(false);
       conn.send('browsers.audio', { id: profileId, on: false });
       el.pause();
       if (el.src) URL.revokeObjectURL(el.src);
@@ -174,5 +199,5 @@ export function useRemoteAudio(profileId: string) {
     return () => { done = true; stop(); conn.send('browsers.cam', { id: profileId, on: false }); };
   }, [cam, profileId]);
 
-  return { sound, setSound, mic, setMic, cam, setCam, error, clearError: () => setError(null) };
+  return { sound, setSound, blocked, mic, setMic, cam, setCam, error, clearError: () => setError(null) };
 }

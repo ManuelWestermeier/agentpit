@@ -5,6 +5,7 @@ let cfg = null;
 let ws = null;
 let st = { mic: false, cam: false, remote: false };
 let capturing = false;
+let chain = Promise.resolve();
 let consumers = new Map(); // tabId → Set(kind)
 
 // read again on every connect: a restarted cockpit (other port) rewrites it for browsers that kept running
@@ -33,8 +34,8 @@ async function broadcastState() {
 async function control(m) {
   if (m.t === 'state') { st = { ...st, ...m.st }; broadcastState(); }
   else if (m.t === 'capture') {
-    if (m.on) await startCapture(m);
-    else await stopCapture();
+    // one capture change at a time: two quick starts (sound on + tab switch) would cut each other off
+    chain = chain.then(() => (m.on ? startCapture(m) : stopCapture())).catch(() => {});
   } else if (m.t === 'choose') chrome.tabs.sendMessage(m.tab, { t: 'choose', id: m.id, index: m.index }, { frameId: m.frame }).catch(() => {});
 }
 
@@ -56,12 +57,15 @@ async function startCapture({ local }) {
   if (!tab) return;
   await ensureOffscreen();
   await stopCapture();
-  try {
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    capturing = true;
-    await chrome.runtime.sendMessage({ to: 'off', t: 'start', streamId, local: !!local });
-  } catch (e) {
-    ws?.send(JSON.stringify({ t: 'error', text: `Ton: ${e.message}` }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+      capturing = true;
+      if (await chrome.runtime.sendMessage({ to: 'off', t: 'start', streamId, local: !!local })) return;
+    } catch (e) {
+      if (attempt === 2) ws?.send(JSON.stringify({ t: 'error', text: `Ton: ${e.message}` }));
+    }
+    await new Promise((r) => setTimeout(r, 300)); // the previous capture is still shutting down
   }
 }
 

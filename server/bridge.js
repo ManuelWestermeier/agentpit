@@ -2,7 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
+import { _test as audioTest } from './audio.js';
+
+const { Fmp4Splitter } = audioTest;
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'browser-ext');
 /** Fixed by the public key in browser-ext/manifest.json. */
@@ -22,7 +26,7 @@ export class Bridge {
     this.tokenFile = path.join(ctx.config.dataDir, '.ext-token');
     this.token = this.#token();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024, perMessageDeflate: false });
-    this.ids = new Map(); // identity → { sw, off, listeners:Set, header:[], state, owner:{mic,cam}, error }
+    this.ids = new Map(); // identity → { sw, off, listeners: Map(client → 'webm'|'mp4'), header, aac, state, owner:{mic,cam} }
   }
 
   #token() {
@@ -35,7 +39,7 @@ export class Bridge {
 
   #entry(id) {
     let e = this.ids.get(id);
-    if (!e) this.ids.set(id, e = { sw: null, off: null, listeners: new Set(), header: [], collecting: false, state: { mic: false, cam: false, remote: false }, owner: { mic: null, cam: null } });
+    if (!e) this.ids.set(id, e = { sw: null, off: null, listeners: new Map(), header: [], aac: null, collecting: false, state: { mic: false, cam: false, remote: false }, owner: { mic: null, cam: null } });
     return e;
   }
 
@@ -93,41 +97,85 @@ export class Bridge {
       if (binary) return role === 'off' ? this.#audio(id, e, data) : null;
       let m;
       try { m = JSON.parse(String(data)); } catch { return; }
-      if (m.t === 'begin') { e.header = []; e.collecting = true; this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', reset: true, codec: m.codec }); }
+      if (m.t === 'begin') { e.header = []; e.collecting = true; this.#restartAac(id, e); this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', reset: true }); }
       else if (m.t === 'error') this.#toListeners(e, { t: 'bnotice', profileId: id, level: 'warn', text: String(m.text).slice(0, 300) });
       else if (m.t === 'select') this.#toViewers(id, { t: 'bselect', profileId: id, sel: { tab: m.tab, frame: m.frame, id: m.id }, title: String(m.title ?? '').slice(0, 120), index: m.index, options: (m.options ?? []).slice(0, 1000) });
     });
   }
 
   #send(e, m) { if (e.sw?.readyState === 1) e.sw.send(JSON.stringify(m)); }
-  #toListeners(e, m) { for (const c of e.listeners) this.ctx.hub.send(c, m); }
+  #toListeners(e, m, codec = null) { for (const [c, k] of e.listeners) if (!codec || k === codec) this.ctx.hub.send(c, m); }
   #toViewers(id, m) { for (const c of this.ctx.browsers?.running.get(id)?.viewers ?? []) this.ctx.hub.send(c, m); }
 
-  /** MediaRecorder output: the first pieces carry the WebM header – kept for viewers that join later. */
+  /**
+   * MediaRecorder output (Opus/WebM). The first piece carries the header. Viewers that cannot play
+   * WebM (Safari, iPhone) get the same sound converted to AAC in fragmented MP4 by ffmpeg.
+   */
   #audio(id, e, buf) {
+    if (e.aac?.proc.stdin.writable) e.aac.proc.stdin.write(buf);
     const data = buf.toString('base64');
     if (e.collecting) {
       e.header.push(data);
-      if (e.header.length >= 1) e.collecting = false; // the first chunk holds EBML header + tracks
-      this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'webm', init: data });
+      e.collecting = false; // the first chunk holds EBML header + tracks
+      this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'webm', init: data }, 'webm');
       return;
     }
-    this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'webm', data });
+    this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'webm', data }, 'webm');
+  }
+
+  /** ffmpeg WebM/Opus → fMP4/AAC, only while an MP4 listener exists; restarted with every new recording. */
+  #restartAac(id, e) {
+    try { e.aac?.proc.kill(); } catch { /* gone */ }
+    e.aac = null;
+    if (![...e.listeners.values()].includes('mp4')) return;
+    const proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-fflags', 'nobuffer', '-f', 'webm', '-i', 'pipe:0',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-f', 'mp4', '-movflags', 'frag_every_frame+empty_moov+default_base_moof', '-frag_duration', '100000', 'pipe:1'],
+    { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const aac = { proc };
+    e.aac = aac;
+    proc.on('error', () => {
+      if (e.aac !== aac) return;
+      e.aac = null;
+      this.#toListeners(e, { t: 'bnotice', profileId: id, level: 'warn', text: 'Ton für dieses Gerät braucht ffmpeg auf dem Server – installieren (z. B. sudo apt install ffmpeg / winget install Gyan.FFmpeg).' }, 'mp4');
+    });
+    proc.stdin.on('error', () => {});
+    const split = new Fmp4Splitter(
+      (init) => this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'mp4', init: init.toString('base64') }, 'mp4'),
+      (frag) => this.#toListeners(e, { t: 'bmedia', profileId: id, kind: 'audio', codec: 'mp4', data: frag.toString('base64') }, 'mp4'),
+    );
+    proc.stdout.on('data', (d) => split.push(d));
   }
 
   // ---------------------------------------------------------------- called by the cockpit
 
-  /** Sound of this identity to `client`. A new listener restarts the recording: everyone gets a clean start. */
-  listen(id, client, on) {
+  /**
+   * Sound of this identity to `client` ('webm' or 'mp4', whatever its browser plays). A new listener
+   * restarts the recording, so everyone gets a clean start. Not connected yet (browser just starting)?
+   * The listener waits; the recording starts as soon as the extension connects (#attach).
+   */
+  listen(id, client, on, codec = 'webm') {
     const e = this.#entry(id);
     if (!on) {
       e.listeners.delete(client);
-      if (!e.listeners.size) this.#send(e, { t: 'capture', on: false });
-      return;
+      if (!e.listeners.size) { this.#send(e, { t: 'capture', on: false }); try { e.aac?.proc.kill(); } catch { /* gone */ } e.aac = null; }
+      return { connected: !!e.sw };
     }
-    if (!e.sw) throw Object.assign(new Error(this.#missing(id)), { user: true });
-    e.listeners.add(client);
+    if (!this.ctx.browsers?.running.has(id)) throw Object.assign(new Error('Browser läuft nicht.'), { user: true });
+    e.listeners.set(client, codec === 'mp4' ? 'mp4' : 'webm');
     this.#send(e, { t: 'capture', on: true });
+    if (!e.sw) this.#waitHint(id, client);
+    return { connected: !!e.sw };
+  }
+
+  /** Still no extension after a while: this browser was started without it (older version) or Chrome blocks it. */
+  #waitHint(id, client) {
+    setTimeout(() => {
+      const e = this.ids.get(id);
+      if (!e || e.sw || (!e.listeners.has(client) && e.owner.mic !== client && e.owner.cam !== client)) return;
+      const chrome = this.ctx.browsers?.profiles.get(id)?.engine === 'chrome';
+      this.ctx.hub.send(client, { t: 'bnotice', profileId: id, level: 'warn', restart: !chrome,
+        text: chrome ? this.#missing(id) : 'Ton und Mikrofon brauchen einen Neustart dieses Browsers (er lief schon vor dem Update).' });
+    }, 8000).unref?.();
   }
 
   /** The shown tab changed: record that one instead. */
@@ -146,7 +194,8 @@ export class Bridge {
   /** Viewer's microphone (kind 'mic') or camera ('cam') becomes the page's microphone/camera. */
   device(id, client, kind, on) {
     const e = this.#entry(id);
-    if (on && !e.sw) throw Object.assign(new Error(this.#missing(id)), { user: true });
+    if (on && !this.ctx.browsers?.running.has(id)) throw Object.assign(new Error('Browser läuft nicht.'), { user: true });
+    if (on && !e.sw) this.#waitHint(id, client); // switched on now, delivered as soon as the extension connects
     if (on) e.owner[kind] = client;
     else if (e.owner[kind] === client || client == null) e.owner[kind] = null;
     else return;

@@ -46,7 +46,7 @@ $SUDO node "$PW_CLI" install-deps chromium
 AGENTPIT_HOME="$AGENTPIT_HOME" "$BIN" install-browser
 
 step "Dienst einrichten"
-$SUDO loginctl enable-linger "$USER_NAME" # /run/user/<id> stays → PulseAudio works without a login
+$SUDO loginctl enable-linger "$USER_NAME" 2>/dev/null || true # /run/user/<id> stays → PulseAudio works without a login
 mkdir -p "$AGENTPIT_HOME"
 ENV_FILE="$AGENTPIT_HOME/.env"
 touch "$ENV_FILE"
@@ -54,6 +54,7 @@ set_env() { grep -q "^$1=" "$ENV_FILE" && sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE" |
 set_env OPEN_BROWSER false
 set_env PORT "$PORT"
 [[ "${TUNNEL:-}" =~ ^(on|1|true|yes|quick|token)$ ]] && set_env TUNNEL on
+if [[ -d /run/systemd/system ]] && $SUDO systemctl list-units >/dev/null 2>&1; then
 $SUDO tee /etc/systemd/system/agentpit.service >/dev/null <<UNIT
 [Unit]
 Description=agentpit – web cockpit for Claude Code
@@ -78,6 +79,12 @@ UNIT
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now agentpit
 $SUDO systemctl restart agentpit
+else
+  # no systemd (containers, WSL without it): start in the background now
+  echo "Kein systemd – agentpit läuft im Hintergrund (nach einem Neustart erneut: $BIN --no-open)."
+  pkill -f "agentpit.js --no-open" 2>/dev/null || true
+  AGENTPIT_HOME="$AGENTPIT_HOME" nohup "$BIN" --no-open >> "$AGENTPIT_HOME/agentpit.log" 2>&1 &
+fi
 
 step "Fertig"
 for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break; sleep 1; done

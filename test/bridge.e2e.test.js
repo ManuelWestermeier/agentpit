@@ -148,6 +148,31 @@ describe(`Medien-Brücke (${engine}, sichtbar)`, { skip, concurrency: false }, (
     } finally { bridge.listen(id, viewer, false); await page('window.osc.stop(), true'); }
   });
 
+  test('Safari/iPhone: derselbe Ton als AAC in MP4 (ffmpeg auf dem Server)', { timeout: 30_000 }, async () => {
+    await page(`(() => { const c = new AudioContext(); const o = c.createOscillator(); o.connect(c.destination); o.start(); c.resume(); window.osc = o; return true; })()`, true);
+    msgs.length = 0;
+    const safari = { ws: { bufferedAmount: 0, readyState: 1 } };
+    bridge.listen(id, safari, true, 'mp4');
+    try {
+      const init = await waitFor(() => msgs.find((m) => m.t === 'bmedia' && m.codec === 'mp4' && m.init), 15_000, 'MP4-Kopf');
+      assert.equal(Buffer.from(init.init, 'base64').toString('latin1', 4, 8), 'ftyp');
+      await waitFor(() => msgs.filter((m) => m.t === 'bmedia' && m.codec === 'mp4' && m.data).length >= 5, 15_000, 'AAC-Fragmente');
+      assert.ok(!msgs.some((m) => m.t === 'bmedia' && m.codec === 'webm'), 'kein WebM an Safari');
+    } finally { bridge.listen(id, safari, false); await page('window.osc.stop(), true'); }
+  });
+
+  test('Ton einschalten, bevor die Brücke verbunden ist, wartet statt zu scheitern', { timeout: 10_000 }, async () => {
+    const e2 = bridge.ids.get(id);
+    const sw = e2.sw;
+    e2.sw = null; // as if the extension had not connected yet
+    const late = { ws: { bufferedAmount: 0, readyState: 1 } };
+    try {
+      const r = bridge.listen(id, late, true);
+      assert.equal(r.connected, false);
+      assert.ok(e2.listeners.has(late));
+    } finally { bridge.listen(id, late, false); e2.sw = sw; }
+  });
+
   test('Auswahlliste (<select>) öffnet sich beim Zuschauer', { timeout: 20_000 }, async () => {
     msgs.length = 0;
     await click(100, 25);

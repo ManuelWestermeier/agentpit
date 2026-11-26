@@ -36,7 +36,7 @@ async function start({ streamId, local }) {
 
 chrome.runtime.onMessage.addListener((m, _s, reply) => {
   if (m.to !== 'off') return false;
-  if (m.t === 'start') start(m).then(() => reply(true), (e) => { ws?.send(JSON.stringify({ t: 'error', text: `Ton: ${e.message}` })); reply(false); });
+  if (m.t === 'start') start(m).then(() => reply(true), () => reply(false)); // the worker retries and reports
   else if (m.t === 'stop') { stop(); reply(true); }
   return true;
 });

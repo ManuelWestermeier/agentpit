@@ -159,12 +159,9 @@ export function createActions(ctx) {
     'browsers.install': () => { ctx.browsers.installBrowsers(); return null; },
     'browsers.fedcm': async (msg) => { await ctx.browsers.answerFedCm(String(msg.id), { action: String(msg.action ?? ''), index: msg.index }); return null; },
     // sound out: the extension's tab capture (every OS), else PulseAudio on Linux
-    'browsers.audio': async (msg, client) => {
-      const id = String(msg.id), on = msg.on !== false;
-      if (ctx.bridge.connected(id) || !on) { ctx.bridge.listen(id, client, on); await ctx.audio.listen(id, client, false); return { via: 'bridge' }; }
-      await ctx.audio.listen(id, client, on);
-      return { via: 'pulse' };
-    },
+    // sound out: tab capture through the extension on every OS; the viewer says what it can play
+    'browsers.audio': (msg, client) => ctx.bridge.listen(String(msg.id), client, msg.on !== false, msg.codec === 'mp4' ? 'mp4' : 'webm'),
+    'browsers.restart': async (msg) => { const id = String(msg.id); await ctx.browsers.stop(id); await ctx.browsers.start(id); return null; },
     // microphone in: a real PulseAudio microphone where available (Linux), else through the extension
     'browsers.mic': async (msg, client) => {
       const id = String(msg.id);

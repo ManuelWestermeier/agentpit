@@ -9,7 +9,7 @@ import { DEFAULT_STREAM, StreamControls, StreamStatsView } from './StreamSetting
 interface Tab { i: number; url: string; title: string; active: boolean }
 interface Dialog { type: string; message: string; defaultValue: string }
 interface FedCm { dialogType: string; title: string; subtitle: string; accounts: { email: string; name: string; picture?: string }[] }
-interface Notice { level: string; text: string; stalled?: boolean }
+interface Notice { level: string; text: string; stalled?: boolean; restart?: boolean }
 interface SelectReq { sel: unknown; title: string; index: number; options: { label: string; disabled: boolean; group: string }[] }
 
 const BUTTON: Record<number, string> = { 0: 'left', 1: 'middle', 2: 'right' };
@@ -110,7 +110,7 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
       } else if (m.t === 'bselect') {
         setSelect({ sel: m.sel, title: m.title, index: m.index, options: m.options ?? [] });
       } else if (m.t === 'bnotice') {
-        setNotice(m.clear ? null : { level: m.level, text: m.text, stalled: m.stalled });
+        setNotice(m.clear ? null : { level: m.level, text: m.text, stalled: m.stalled, restart: m.restart });
       }
     });
     return () => { off(); conn.send('browsers.view', { id: profileId, on: false }); };
@@ -300,6 +300,9 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
             <button className="btn" onClick={() => { setError(null); conn.call('browsers.view', { id: profileId, on: true }, 60_000).catch((e) => setError(e.message)); }}>Erneut starten</button>
           </div>
         )}
+        {av.sound && av.blocked && !av.error && (
+          <div className="bnotice" role="status"><span>Klicke einmal ins Bild – dann startet der Ton.</span></div>
+        )}
         {av.error && (
           <div className="bnotice warn" role="status"><span>{av.error}</span><button className="btn ghost icon small" aria-label="Schließen" onClick={av.clearError}><X size={12} /></button></div>
         )}
@@ -307,6 +310,7 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
           <div className={`bnotice ${notice.level}`} role="status">
             <span>{notice.text}</span>
             {notice.stalled && <button className="btn small" onClick={() => { setNotice(null); nav('reload'); }}>Tab neu laden</button>}
+            {notice.restart && <button className="btn small" onClick={() => { setNotice(null); act(() => conn.call('browsers.restart', { id: profileId }, 60_000)); }}>Browser neu starten</button>}
             <button className="btn ghost icon small" aria-label="Schließen" onClick={() => setNotice(null)}><X size={12} /></button>
           </div>
         )}
