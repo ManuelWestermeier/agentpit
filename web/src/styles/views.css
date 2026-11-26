@@ -266,3 +266,51 @@ details.adv .muted { font-weight: 400; color: var(--text-2); }
 .acc-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 24px; gap: 8px; align-items: center; font-size: var(--t-s); padding: 3px 0; min-height: 28px; border-bottom: 1px solid var(--line); }
 .acc-row > :nth-child(3) { max-width: 220px; }
 .acc-cur { color: var(--green); font-weight: 500; }
+
+/* remote browser: fullscreen, notices, browser sign-in dialog */
+.bview--full { background: #000; }
+.bview--full .btoolbar { position: absolute; top: 0; left: 50%; transform: translate(-50%, calc(-100% + 5px)); z-index: 20; opacity: .85; border-radius: 0 0 8px 8px; background: var(--panel); transition: transform 180ms var(--ease); width: min(900px, 100%); }
+.bview--full .btoolbar:hover, .bview--full .btoolbar:focus-within { transform: translate(-50%, 0); opacity: 1; }
+.bview--full .btabs { display: none; }
+.bview--full .bstage img { box-shadow: none; }
+.bview { position: relative; }
+.bnotice { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 15; display: flex; align-items: center; gap: 8px; max-width: min(560px, 92%); padding: 6px 8px 6px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line-strong); font-size: var(--t-s); color: var(--text-1, inherit); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
+.bnotice.warn { border-color: rgba(240, 167, 58, 0.6); }
+.bnotice.error { border-color: var(--red); }
+.fedcm-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fedcm-list .btn { justify-content: flex-start; gap: 10px; text-align: left; padding: 8px 10px; }
+.fedcm-list img { border-radius: 50%; }
+.fedcm-list small { display: block; color: var(--text-3); font-size: var(--t-xs); }
+.bdialog label.btn { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+/* browser user page /u/<name> */
+.bo { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--sunken); }
+.bo > .bview { flex: 1; }
+.bo-user { display: inline-flex; gap: 4px; align-items: center; margin-right: 4px; }
+.user-row { border-top: 1px solid var(--line); padding: 8px 0; }
+.user-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.user-head code { font: 400 var(--t-xs) var(--mono); color: var(--text-3); }
+.user-browsers { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: var(--t-s); }
+.user-browsers .check { display: inline-flex; gap: 6px; align-items: center; }
+.user-new { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.user-new .input { flex: 1; min-width: 140px; }
+
+/* server health pill + panel, tunnel */
+.srv-wrap { position: relative; display: inline-flex; }
+.usage-pill.srv { gap: 5px; }
+.usage-pill.srv.warning { color: var(--amber); }
+.usage-pill.srv.critical { color: var(--red); border-color: var(--red); }
+.srv-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: min(380px, 92vw); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); font-size: var(--t-s); }
+.srv-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.srv-alert { padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; background: var(--amber-soft); color: var(--amber); }
+.srv-alert.critical { color: var(--red); }
+.srv-bar { display: grid; grid-template-columns: 38px 1fr auto; gap: 8px; align-items: center; margin: 5px 0; }
+.srv-track { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.srv-track i { display: block; height: 100%; background: var(--text-3); }
+.srv-track i.warm { background: var(--amber); }
+.srv-track i.hot { background: var(--red); }
+.srv-spark { display: flex; justify-content: space-between; align-items: center; margin: 8px 0 4px; color: var(--text-2); }
+.srv-facts { font-size: var(--t-xs); }
+.srv-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: var(--t-xs); }
+.srv-table td { padding: 3px 0; border-top: 1px solid var(--line); }
+.tunnel-url { display: flex; gap: 6px; align-items: center; margin: 6px 0; font: 500 var(--t-s) var(--mono); word-break: break-all; }

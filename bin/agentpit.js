@@ -24,6 +24,8 @@ Options
   --home <dir>      where data, projects and .env live (default ~/.agentpit)
   --no-open         do not open a browser window
   --public-url <u>  public HTTPS address when reached through a tunnel
+  --tunnel          remote access via Cloudflare Tunnel (no account needed; with
+                    CLOUDFLARE_TUNNEL_TOKEN in .env your own domain)
   -v, --version     print the version
   -h, --help        this help
 
@@ -46,6 +48,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--home') process.env.AGENTPIT_HOME = val();
   else if (a === '--no-open') process.env.OPEN_BROWSER = 'false';
   else if (a === '--public-url') process.env.PUBLIC_URL = val();
+  else if (a === '--tunnel') process.env.TUNNEL = 'on';
   else if (a === 'start') cmd = null;
   else if (cmds[a]) cmd = a;
   else { console.error(`Unknown argument: ${a}\n\n${HELP}`); process.exit(1); }

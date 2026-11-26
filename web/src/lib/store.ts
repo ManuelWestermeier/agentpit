@@ -1,4 +1,5 @@
 import { t } from './i18n';
+import type { MonitorSnapshot, TunnelSnapshot } from '../components/Ops';
 import { create } from 'zustand';
 import { Timeline } from './timeline';
 import type { AuthSnapshot, BrowsersState, Catalog, GitHubSnapshot, Hello, HistoryResult, Limits, Project, RunnerStatus, Schedule, ServiceInfo, SessionInfo } from './types';
@@ -46,6 +47,8 @@ interface State {
   preview: { path: string; at: number } | null;
   toasts: Toast[];
   loginOpen: boolean;
+  monitor: MonitorSnapshot | null;
+  tunnel: TunnelSnapshot | null;
   draft: Record<string, string>;
 
   init(): void;
@@ -78,10 +81,20 @@ export const useStore = create<State>()((set, get) => {
     switch (msg.t) {
       case 'hello': {
         const h = msg as Hello & { t: string };
-        set({ hello: h, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits, browsers: h.browsers, github: h.github, schedules: h.schedules ?? [] });
+        set({ hello: h, monitor: (h as any).monitor ?? null, tunnel: (h as any).tunnel ?? null, projects: h.projects, runners: h.runners, auth: h.auth, catalog: h.catalog, limits: h.limits, browsers: h.browsers, github: h.github, schedules: h.schedules ?? [] });
         const remembered = s.activeId ?? storage.get(LS_ACTIVE);
         const pick = h.projects.find((p) => p.id === remembered)?.id ?? h.projects[0]?.id ?? null;
         get().selectProject(pick);
+        return;
+      }
+      case 'monitor':
+        set({ monitor: msg as unknown as MonitorSnapshot });
+        return;
+      case 'tunnel':
+        set({ tunnel: msg.tunnel });
+        return;
+      case 'config': {
+        if (s.hello) set({ hello: { ...s.hello, config: { ...s.hello.config, ...msg.patch } } });
         return;
       }
       case 'projects': {
@@ -226,6 +239,8 @@ export const useStore = create<State>()((set, get) => {
     preview: null,
     toasts: [],
     loginOpen: false,
+    monitor: null,
+    tunnel: null,
     draft: {},
 
     set: (p) => set(p),

@@ -7,3 +7,6 @@ browsers/
 .env
 *.log
 # web/dist wird mitgeliefert, damit `npm start` ohne Build läuft.
+
+# tools downloaded at runtime (cloudflared)
+bin/cloudflared*

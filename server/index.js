@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { createActions } from './actions.js';
 import { Auth } from './auth.js';
 import { Browsers } from './browsers.js';
@@ -21,14 +23,19 @@ import { checkEnvironment } from './environment.js';
 import { Files } from './files.js';
 import { Hub } from './hub.js';
 import { Limits } from './limits.js';
-import { MEDIA_NAME_RE, Media } from './media.js';
+import { Media } from './media.js';
 import { Projects } from './projects.js';
 import { Runners } from './runners.js';
 import { createSecurity } from './security.js';
+import { createAccess } from './access.js';
+import { Monitor } from './monitor.js';
+import { Tunnel } from './tunnel.js';
+import { Audio } from './audio.js';
 import { Sessions } from './sessions.js';
+import { mountStatic } from './static.js';
 import { Store, isProjectId } from './store.js';
 import { Terminals } from './terminals.js';
-import { safeEqual, throttle } from './util.js';
+import { UserError, safeEqual, throttle } from './util.js';
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
@@ -76,6 +83,9 @@ async function main() {
   ctx.databases = new Databases(ctx);
   ctx.services = new Services(ctx);
   ctx.localUrl = `http://127.0.0.1:${port}`;
+  ctx.monitor = new Monitor(ctx);
+  ctx.tunnel = new Tunnel(ctx);
+  ctx.audio = new Audio(ctx);
 
   if (process.env.COCKPIT_MOCK === '1') {
     // Development only: scripted fake sessions to exercise the UI without a Claude login.
@@ -100,6 +110,8 @@ async function main() {
   ctx.janitor.start();
   const security = createSecurity({ config: cfg, port });
   ctx.security = security;
+  ctx.access = createAccess(ctx);
+  ctx.hub.filter = (client, msg) => ctx.access.filter(client, msg);
   const localPreview = `http://127.0.0.1:${previewPort}/p/${security.previewToken}`;
   // Remote clients: a second public origin if configured (PREVIEW_PUBLIC_URL), otherwise the sandboxed
   // same-origin route /p/… of the main server (works through any single tunnel).
@@ -111,7 +123,16 @@ async function main() {
   };
   setInterval(ctx.enforceSessions, 30_000).unref();
 
-  ctx.helloPayload = async (client) => ({
+  ctx.helloPayload = async (client) => (client?.user ? {
+    // browser user: their identities and nothing else
+    version: VERSION,
+    user: ctx.access.describe(client),
+    config: { allowBypass: false, permissionModes: [], idleTimeoutMin: 0, maxRunners: 0, previewBase: '', terminals: false, remote: !client.local, hasPassword: true, autoCompactPct: 0 },
+    browsers: { profiles: ctx.browsers.list({ hidden: true }).filter((p) => ctx.access.describe(client).browsers.includes(p.id)), status: {} },
+    audio: await ctx.audio.status(),
+    projects: [], runners: {}, schedules: [],
+  } : {
+    user: ctx.access.describe(client ?? {}),
     version: VERSION,
     config: {
       allowBypass: cfg.allowBypass,
@@ -134,6 +155,9 @@ async function main() {
     runners: ctx.runners.snapshots(),
     schedules: ctx.schedules.list(),
     installs: ctx.installer.snapshot(),
+    tunnel: ctx.tunnel.snapshot(),
+    audio: await ctx.audio.status(),
+    monitor: ctx.monitor.last,
   });
 
   // ---- broadcasts
@@ -149,8 +173,17 @@ async function main() {
     for (const id of [...ctx.files.watchers.keys()]) if (!subs.has(id)) ctx.files.unwatch(id);
   });
   ctx.github.on('change', () => hub.toAll({ t: 'github', github: ctx.github.snapshot() }));
+  ctx.tunnel.on('change', throttle(() => hub.toAll({ t: 'tunnel', tunnel: ctx.tunnel.snapshot() }), 300));
   hub.on('connect', async (client) => hub.send(client, { t: 'hello', ...(await ctx.helloPayload(client)) }));
-  hub.on('disconnect', (client) => ctx.browsers.dropClient(client));
+  hub.on('disconnect', (client) => { ctx.browsers.dropClient(client); ctx.audio.dropClient(client); });
+  // binary frame: [1 = mic][id length][id][PCM s16le mono] – only for identities this client may use
+  hub.binary = (client, buf) => {
+    if (!Buffer.isBuffer(buf) || buf.length < 3 || buf[0] !== 1) return;
+    const n = buf[1];
+    const id = buf.toString('utf8', 2, 2 + n);
+    if (!ctx.access.canUseBrowser(client.user ? { user: client.user } : { id: client.session }, id)) return;
+    ctx.audio.micData(id, client, buf.subarray(2 + n));
+  };
   hub.onMessage(createActions(ctx));
 
   // ---- main app (UI, API, WebSocket)
@@ -196,11 +229,6 @@ async function main() {
 
   app.use(security.middleware);
 
-  app.get('/media/:name', (req, res) => {
-    if (!MEDIA_NAME_RE.test(req.params.name)) return res.status(404).end();
-    res.sendFile(path.join(store.p('media'), req.params.name), { maxAge: '30d', immutable: true });
-  });
-
   app.post('/api/projects/:id/upload', async (req, res) => {
     try {
       if (!isProjectId(req.params.id)) return res.status(400).json({ error: 'Ungültige Projekt-ID' });
@@ -211,12 +239,25 @@ async function main() {
     }
   });
 
+  // file for a remote browser's file chooser (Page.fileChooserOpened → viewer picks → upload → setFileInputFiles)
+  app.post('/api/browsers/:id/upload', async (req, res) => {
+    try {
+      if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(req.params.id)) return res.status(400).json({ error: 'Ungültige ID' });
+      if (!ctx.access.canUseBrowser(req.cockpitSession, req.params.id)) return res.status(403).json({ error: 'Kein Zugriff' });
+      const { file, abs } = await ctx.browsers.uploadPath(req.params.id, req.query.name);
+      let size = 0;
+      const max = 512 * 1024 ** 2;
+      await pipeline(req, new Transform({ transform(c, _e, cb) { size += c.length; cb(size > max ? new UserError('Datei zu groß (max. 512 MB)') : null, c); } }), fs.createWriteStream(abs, { flags: 'wx' }))
+        .catch(async (e) => { await fs.promises.rm(abs, { force: true }); throw e; });
+      res.json({ file });
+    } catch (e) {
+      if (!res.headersSent) res.status(e.user ? 400 : 500).json({ error: e.message });
+    }
+  });
+
   app.get('/api/health', (_req, res) => res.json({ ok: true, version: VERSION }));
 
-  if (fs.existsSync(path.join(cfg.webDist, 'index.html'))) {
-    app.use(express.static(cfg.webDist, { index: false, maxAge: '1h' }));
-    app.get(/^\/(?!api\/|media\/).*/, (_req, res) => res.sendFile(path.join(cfg.webDist, 'index.html')));
-  } else {
+  if (!mountStatic(app, { webDist: cfg.webDist, mediaDir: store.p('media'), hasUi: fs.existsSync(path.join(cfg.webDist, 'index.html')) })) {
     app.get('/', (_req, res) => res.type('text/plain').send('Web-UI nicht gebaut: npm run build:web'));
   }
 
@@ -277,6 +318,12 @@ async function main() {
   await new Promise((resolve) => previewServer.listen(previewPort, '127.0.0.1', resolve));
 
   ctx.usagePoller.start();
+  ctx.monitor.start();
+  // TUNNEL=quick | token (or --tunnel): remote access through Cloudflare right away
+  if (/^(1|true|yes|on|quick|token|cloudflare)$/i.test(process.env.TUNNEL ?? '')) {
+    ctx.tunnel.start(/^token$/i.test(process.env.TUNNEL) || process.env.CLOUDFLARE_TUNNEL_TOKEN ? 'token' : 'quick')
+      .catch((e) => console.warn(`  Tunnel: ${e.message}`));
+  }
   ctx.github.refresh().catch(() => {});
   for (const p of await ctx.projects.list()) ctx.services.autostart(p.id).catch(() => {});
   ctx.auth.refresh().then((s) => {
@@ -313,6 +360,9 @@ async function main() {
     const force = setTimeout(() => process.exit(1), 8000);
     force.unref();
     ctx.usagePoller.stop();
+    ctx.monitor.stop();
+    ctx.tunnel.stop();
+    ctx.audio.stopAll();
     ctx.schedules.stop();
     ctx.janitor.stop();
     ctx.auth.cancelLogin('Server beendet');

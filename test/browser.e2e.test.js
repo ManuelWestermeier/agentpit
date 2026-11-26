@@ -11,6 +11,7 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Browsers } from '../server/browsers.js';
+import { Cdp } from '../server/cdp.js';
 import { findBrowserExecutable } from '../server/environment.js';
 import { Store } from '../server/store.js';
 
@@ -22,8 +23,24 @@ const screen = process.platform !== 'linux' || !!(process.env.DISPLAY || process
 const modes = (process.env.E2E_MODES || (screen ? 'headless,headed' : 'headless')).split(',').map((s) => s.trim()).filter(Boolean);
 const skip = !engine || !findBrowserExecutable(engine) ? `kein Browser gefunden (${engine ?? 'chrome/msedge/chromium'})` : false;
 
+// The page also runs the usual CDP check of anti-bot scripts: with Runtime enabled anywhere, console
+// arguments get serialised and the stack getter fires. A regular browser never does that.
 const PAGE = '<!doctype html><title>e2e</title><div id="d" style="font:40px monospace"></div>'
-  + '<script>const d=document.getElementById("d");const t=()=>{d.textContent=performance.now().toFixed(1);requestAnimationFrame(t)};t()</script>';
+  + '<input type="file" id="f" style="position:fixed;left:0;top:200px;width:300px;height:60px"><button id="b" style="position:fixed;left:0;top:300px;width:300px;height:60px" onclick="window.clicks=(window.clicks||0)+1">x</button>'
+  + '<script>const d=document.getElementById("d");const t=()=>{d.textContent=performance.now().toFixed(1);requestAnimationFrame(t)};t();'
+  + 'window.cdpSeen=false;setInterval(()=>{const e=new Error();Object.defineProperty(e,"stack",{get(){window.cdpSeen=true;return""}});console.debug(e)},100)</script>';
+
+/** Evaluates in the page from a separate test connection (Runtime.evaluate needs no Runtime.enable). */
+async function evalIn(port, targetId, fn) {
+  const v = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json());
+  const c = await Cdp.connect(v.webSocketDebuggerUrl);
+  try {
+    const sid = await c.attach(targetId);
+    const r = await c.send('Runtime.evaluate', { expression: `(${fn})()`, returnByValue: true, awaitPromise: true }, sid);
+    if (r.exceptionDetails) throw new Error(r.exceptionDetails.text);
+    return r.result.value;
+  } finally { c.close(); }
+}
 
 const waitFor = async (pred, ms, what) => {
   const end = Date.now() + ms;
@@ -38,6 +55,8 @@ const waitFor = async (pred, ms, what) => {
 for (const mode of modes) {
   describe(`Browser ${engine} (${mode}) auf ${process.platform}-${process.arch}`, { skip, concurrency: false }, () => {
     let b, e, id, url, server, dir, mainPage;
+    const messages = [];
+    const page = (fn) => evalIn(e.port, mainPage, fn);
     const stats = [];
     let frames = 0;
     let lastAcceptLanguage = '';
@@ -56,7 +75,7 @@ for (const mode of modes) {
       await store.init();
       const ctx = {
         store, root: ROOT, config: { maxBrowsers: 2, trashDir: path.join(dir, 'trash') }, env: { browser: {} }, projects: { list: async () => [] },
-        hub: { send: (c, m) => { if (m.t === 'bframe') { frames++; c.onFrame?.(m); } else if (m.t === 'bstats') stats.push(m); }, toAll: () => {} },
+        hub: { send: (c, m) => { if (m.t === 'bframe') { frames++; c.onFrame?.(m); } else if (m.t === 'bstats') stats.push(m); else messages.push(m); }, toAll: () => {} },
       };
       b = new Browsers(ctx);
       await b.init();
@@ -66,23 +85,27 @@ for (const mode of modes) {
       e = b.running.get(id);
       mainPage = e.active;
       // Extensions installed on the machine (e.g. a login page) may open tabs in a fresh profile – keep the test page in view.
-      e.context.on('page', (pg) => setTimeout(async () => {
-        await pg.close().catch(() => {});
-        const i = e.context.pages().indexOf(mainPage);
-        if (i >= 0) await b.tab(id, { op: 'select', index: i }).catch(() => {});
-      }, 200));
+      e.cdp.on('Target.targetCreated', ({ targetInfo: t }) => {
+        if (t.type !== 'page' || t.targetId === mainPage || e.ownTabs?.has(t.targetId)) return;
+        setTimeout(async () => {
+          await e.cdp.send('Target.closeTarget', { targetId: t.targetId }).catch(() => {});
+          const i = [...e.pages.keys()].indexOf(mainPage);
+          if (i >= 0) await b.tab(id, { op: 'select', index: i }).catch(() => {});
+        }, 200);
+      });
       await b.navigate(id, { action: 'go', url });
-      await waitFor(() => mainPage.evaluate(() => !!document.getElementById('d')).catch(() => false), 15_000, 'Testseite geladen');
+      await waitFor(() => page(() => !!document.getElementById('d')).catch(() => false), 15_000, 'Testseite geladen');
     });
 
     after(async () => {
       await b?.stopAll();
+      server?.closeAllConnections?.();
       server?.close();
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* browser may still hold files on Windows */ }
     });
 
     test('Identität: Sprache, Zeitzone, Farbschema, kein Automations-/Headless-Merkmal', { timeout: 30_000 }, async () => {
-      const r = await mainPage.evaluate(async () => ({
+      const r = await page(() => ({
         ua: navigator.userAgent, webdriver: navigator.webdriver, langs: navigator.languages, platform: navigator.platform,
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone, dark: matchMedia('(prefers-color-scheme: dark)').matches,
         brands: navigator.userAgentData?.brands?.map((x) => x.brand) ?? null,
@@ -168,7 +191,51 @@ for (const mode of modes) {
     test('Farbschema lässt sich live ändern, ohne Neustart', { timeout: 15_000 }, async () => {
       const r = await b.update(id, { colorScheme: 'light' });
       assert.equal(r.restartNeeded, false);
-      await waitFor(() => mainPage.evaluate(() => !matchMedia('(prefers-color-scheme: dark)').matches), 5000, 'helles Schema');
+      await waitFor(() => page(() => !matchMedia('(prefers-color-scheme: dark)').matches), 5000, 'helles Schema');
+    });
+
+    test('Kein Konsolen-Merkmal: das Cockpit schaltet Runtime nie ein', { timeout: 15_000 }, async () => {
+      await new Promise((r) => setTimeout(r, 1500)); // the page checks every 100 ms
+      assert.equal(await page(() => window.cdpSeen), false);
+    });
+
+    test('Klicks kommen an, auch nach einem Tab-Wechsel', { timeout: 30_000 }, async () => {
+      const click = async () => {
+        b.input(id, { kind: 'mouse', type: 'down', x: 100, y: 330, button: 'left', buttons: 1, clickCount: 1 });
+        await b.input(id, { kind: 'mouse', type: 'up', x: 100, y: 330, button: 'left', clickCount: 1 });
+      };
+      const before = await page(() => window.clicks || 0);
+      await click();
+      await waitFor(async () => (await page(() => window.clicks || 0)) > before, 5000, 'Klick');
+      (e.ownTabs ??= new Set());
+      const n = e.pages.size;
+      await b.tab(id, { op: 'new' });
+      e.ownTabs.add(e.active);
+      assert.equal(e.pages.size, n + 1);
+      await b.tab(id, { op: 'close', index: [...e.pages.keys()].indexOf(e.active) });
+      await waitFor(() => e.active === mainPage, 5000, 'zurück zum Test-Tab');
+      const mid = await page(() => window.clicks);
+      await click();
+      await waitFor(async () => (await page(() => window.clicks)) > mid, 5000, 'Klick nach Tab-Wechsel');
+    });
+
+    test('Seiten-Dialog erscheint beim Zuschauer und lässt sich beantworten', { timeout: 20_000 }, async () => {
+      messages.length = 0;
+      const res = page(() => new Promise((r) => setTimeout(() => r(confirm('Weiter?')), 50)));
+      await waitFor(() => messages.find((m) => m.t === 'bdialog' && m.type === 'confirm'), 5000, 'Dialog-Nachricht');
+      await b.answerDialog(id, true);
+      assert.equal(await res, true);
+    });
+
+    test('Datei-Auswahl: der Zuschauer liefert die Datei statt eines unsichtbaren OS-Dialogs', { timeout: 20_000 }, async () => {
+      messages.length = 0;
+      b.input(id, { kind: 'mouse', type: 'down', x: 100, y: 230, button: 'left', buttons: 1, clickCount: 1 });
+      await b.input(id, { kind: 'mouse', type: 'up', x: 100, y: 230, button: 'left', clickCount: 1 });
+      await waitFor(() => messages.find((m) => m.t === 'bfile'), 5000, 'Datei-Dialog-Nachricht');
+      const up = await b.uploadPath(id, 'notiz.txt');
+      fs.writeFileSync(up.abs, 'hallo');
+      await b.chooseFiles(id, [up.file]);
+      await waitFor(async () => (await page(() => document.getElementById('f').files[0]?.name ?? '')).endsWith('notiz.txt'), 5000, 'Datei im Formular');
     });
   });
 }

@@ -4,6 +4,9 @@ import { useEscape } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
 import { conn } from '../lib/ws';
 import { AccessSection } from './Access';
+import { BypassSection } from './Permissions';
+import { UsersSection } from './Users';
+import { TunnelSection } from './Ops';
 import { langSetting, setLang } from '../lib/i18n';
 
 /** Claude login, GitHub login and remote-access status in one place. */
@@ -18,6 +21,12 @@ export function AccountsDialog() {
         <GitHubSection />
         <hr className="modal-sep" />
         <AccessSection />
+        <hr className="modal-sep" />
+        <TunnelSection />
+        <hr className="modal-sep" />
+        <UsersSection />
+        <hr className="modal-sep" />
+        <BypassSection />
         <hr className="modal-sep" />
         <section>
           <label className="label" htmlFor="ui-lang">Sprache der Oberfläche</label>

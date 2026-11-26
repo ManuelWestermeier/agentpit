@@ -56,30 +56,60 @@ function detectBrowsers() {
   };
 }
 
-const CHROMIUM_EXE = {
-  win32: [['chrome-win64', 'chrome.exe'], ['chrome-win', 'chrome.exe']],
-  linux: [['chrome-linux64', 'chrome'], ['chrome-linux', 'chrome']],
-  darwin: [
-    ['chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'],
-    ['chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'],
-    ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],
-  ],
+const MAC_APPS = [['Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'], ['Chromium.app', 'Contents', 'MacOS', 'Chromium']];
+
+/**
+ * Executables inside one chromium-<rev>/ folder. Instead of a fixed list of folder names
+ * (chrome-linux64, chrome-linux, chrome-linux-arm64, chrome-mac-arm64 …) every folder of the
+ * platform is searched, the one matching this CPU first – new Playwright layouts keep working.
+ */
+function chromiumCandidates(revDir, platform = process.platform, arch = process.arch) {
+  const prefix = { win32: 'chrome-win', linux: 'chrome-linux', darwin: 'chrome-mac' }[platform];
+  if (!prefix) return [];
+  let subs = [];
+  try { subs = fs.readdirSync(revDir).filter((d) => d.startsWith(prefix)); } catch { return []; }
+  const armFirst = arch === 'arm64' || arch === 'arm';
+  const rank = (d) => (/arm/.test(d) === armFirst ? 0 : 1);
+  subs.sort((a, b) => rank(a) - rank(b) || b.length - a.length);
+  const rels = platform === 'win32' ? [['chrome.exe']] : platform === 'darwin' ? MAC_APPS : [['chrome']];
+  return subs.flatMap((d) => rels.map((r) => path.join(revDir, d, ...r)));
+}
+
+const isExecutable = (f) => {
+  try { fs.accessSync(f, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; }
 };
 
-/** Executable for a browser engine: 'chromium' = bundled Playwright build, else system Chrome/Edge. */
-export function findBrowserExecutable(engine) {
-  if (engine === 'chrome' || engine === 'msedge') return detectBrowsers()[engine];
-  const base = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (!base || !fs.existsSync(base)) return null;
-  const dirs = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
-  for (const d of dirs) {
-    for (const parts of CHROMIUM_EXE[process.platform] ?? []) {
-      const exe = path.join(base, d, ...parts);
-      if (fs.existsSync(exe)) return exe;
+/** Folders that may hold Playwright browsers: ours first, then Playwright's default cache. */
+function browserRoots() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const defaults = process.platform === 'win32' ? [process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ms-playwright')]
+    : process.platform === 'darwin' ? [path.join(home, 'Library', 'Caches', 'ms-playwright')] : [path.join(home, '.cache', 'ms-playwright')];
+  return [...new Set([process.env.PLAYWRIGHT_BROWSERS_PATH, ...defaults].filter(Boolean))];
+}
+
+/** Every path findBrowserExecutable('chromium') checks, in order (shown when nothing is found). */
+export function chromiumSearchPaths() {
+  const out = [];
+  for (const base of browserRoots()) {
+    let revs = [];
+    try { revs = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1])); } catch { /* missing */ }
+    if (!revs.length) out.push(path.join(base, 'chromium-*'));
+    for (const r of revs) {
+      const c = chromiumCandidates(path.join(base, r));
+      out.push(...(c.length ? c : [path.join(base, r, '(leer)')]));
     }
   }
-  return null;
+  if (process.platform === 'linux') out.push('/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium');
+  return out;
 }
+
+/** Executable for a browser engine: 'chromium' = bundled Playwright build (or a system Chromium), else system Chrome/Edge. */
+export function findBrowserExecutable(engine) {
+  if (engine === 'chrome' || engine === 'msedge') return detectBrowsers()[engine];
+  return chromiumSearchPaths().find(isExecutable) ?? null;
+}
+
+export const _test = { chromiumCandidates };
 
 /** Via module resolution – installed as a package, npm may hoist dependencies out of our own node_modules. */
 export function playwrightMcpCli() {

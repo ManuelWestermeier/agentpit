@@ -42,6 +42,22 @@ const int = (v, d, min, max) => {
 };
 const list = (v) => String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
+/** Why "Alles erlauben" is not available, and how to change that. */
+export const BYPASS_LOCKED = 'Gesperrt – ALLOW_BYPASS_PERMISSIONS=true in .env setzen und Cockpit neu starten (oder als Admin unter Konto → Freigaben freischalten).';
+
+/** Set one KEY=value in HOME/.env, keeping every other line and comment. Only for plain settings, never secrets. */
+export function setEnvValue(key, value) {
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\r\n]/.test(String(value))) throw new Error('ungültiger Eintrag');
+  const file = path.join(HOME, '.env');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* new file */ }
+  const line = `${key}=${value}`;
+  const re = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${key}[ \\t]*=.*$`, 'm');
+  text = re.test(text) ? text.replace(re, line) : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  fs.writeFileSync(file, text, { mode: 0o600 });
+  process.env[key] = String(value);
+}
+
 const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions'];
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
 

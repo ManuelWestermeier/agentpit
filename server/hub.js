@@ -10,6 +10,7 @@ export class Hub extends EventEmitter {
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     this.clients = new Set();
     this.handler = null;
+    this.filter = null; // (client, msg) → msg | reduced copy | null: what a restricted user may see
     this.heartbeat = setInterval(() => {
       for (const c of this.clients) {
         if (!c.alive) { c.ws.terminate(); continue; }
@@ -31,13 +32,14 @@ export class Hub extends EventEmitter {
       ws, subs: new Set(), alive: true,
       host: String(req?.cockpitHost ?? req?.headers?.host ?? ''),
       session: req?.cockpitSession?.id ?? null,
+      user: req?.cockpitSession?.user ?? null, // browser user (null = admin)
       local: !!req?.cockpitLocal,
       ip: req?.cockpitIp ?? '',
     };
     this.clients.add(client);
     ws.on('pong', () => { client.alive = true; });
     ws.on('message', async (data, isBinary) => {
-      if (isBinary) return;
+      if (isBinary) { this.binary?.(client, data); return; } // microphone audio from a viewer
       let msg;
       try { msg = JSON.parse(String(data)); } catch { return; }
       if (!msg || typeof msg.t !== 'string') return;
@@ -75,22 +77,26 @@ export class Hub extends EventEmitter {
   send(client, obj) {
     const ws = client.ws;
     if (ws.readyState !== ws.OPEN) return;
+    if (client.user && this.filter) { obj = this.filter(client, obj); if (!obj) return; }
     if (ws.bufferedAmount > MAX_BUFFERED && obj.t === 'live') return; // drop stream frames under backpressure
     ws.send(JSON.stringify(obj));
   }
 
   toAll(obj) {
     if (!this.clients.size) return;
-    const s = JSON.stringify(obj);
+    let s = null;
     for (const c of this.clients) {
-      if (c.ws.readyState === c.ws.OPEN) c.ws.send(s);
+      if (c.ws.readyState !== c.ws.OPEN) continue;
+      if (c.user) { this.send(c, obj); continue; } // filtered per user
+      s ??= JSON.stringify(obj);
+      c.ws.send(s);
     }
   }
 
   toProject(projectId, obj) {
     let s = null;
     for (const c of this.clients) {
-      if (!c.subs.has(projectId) || c.ws.readyState !== c.ws.OPEN) continue;
+      if (c.user || !c.subs.has(projectId) || c.ws.readyState !== c.ws.OPEN) continue; // projects are admin-only
       if (obj.t === 'live' && c.ws.bufferedAmount > MAX_BUFFERED) continue;
       s ??= JSON.stringify(obj);
       c.ws.send(s);

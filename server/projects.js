@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { BYPASS_LOCKED } from './config.js';
 import { isProjectId } from './store.js';
 import { slugify, UserError } from './util.js';
 
@@ -118,7 +119,7 @@ export class Projects extends EventEmitter {
     if (typeof p.mode === 'string') {
       if (!this.config.permissionModes.includes(p.mode)) throw new UserError('Unbekannter Berechtigungsmodus');
       if (p.mode === 'bypassPermissions' && !this.config.allowBypass) {
-        throw new UserError('bypassPermissions ist gesperrt (ALLOW_BYPASS_PERMISSIONS=true in .env setzen)');
+        throw new UserError(BYPASS_LOCKED);
       }
       out.mode = p.mode;
     }

@@ -1,3 +1,4 @@
+import { setEnvValue } from './config.js';
 import { isProjectId } from './store.js';
 import { UserError, isUuid } from './util.js';
 
@@ -156,6 +157,10 @@ export function createActions(ctx) {
     'browsers.resize': async (msg) => { await ctx.browsers.resize(String(msg.id), msg.width, msg.height); return null; },
     'browsers.dialog': async (msg) => { await ctx.browsers.answerDialog(String(msg.id), !!msg.accept, msg.text); return null; },
     'browsers.install': () => { ctx.browsers.installBrowsers(); return null; },
+    'browsers.fedcm': async (msg) => { await ctx.browsers.answerFedCm(String(msg.id), { action: String(msg.action ?? ''), index: msg.index }); return null; },
+    'browsers.audio': async (msg, client) => { await ctx.audio.listen(String(msg.id), client, msg.on !== false); return null; },
+    'browsers.mic': async (msg, client) => { if (msg.on === false) ctx.audio.micOff(String(msg.id)); else await ctx.audio.micOn(String(msg.id), client); return null; },
+    'browsers.files': async (msg) => { await ctx.browsers.chooseFiles(String(msg.id), msg.files ?? []); return null; },
 
     // ---- git
     'git.status': (msg) => ctx.git.status(pid(msg)),
@@ -178,6 +183,60 @@ export function createActions(ctx) {
 
     // ---- GitHub
     // ---- access protection (password, devices, trusted addresses)
+    allowAll: async (msg) => {
+      const r = runners.peek(pid(msg));
+      if (!r) throw new UserError('Keine aktive Session');
+      await r.allowAll();
+      return null;
+    },
+    /** Unlock / lock "Alles erlauben" (bypassPermissions): applies now and is kept in .env. */
+    'config.allowBypass': async (msg) => {
+      const on = msg.on === true;
+      setEnvValue('ALLOW_BYPASS_PERMISSIONS', on ? 'true' : 'false');
+      ctx.config.allowBypass = on;
+      if (!on) {
+        for (const r of runners.map.values()) if (r.mode === 'bypassPermissions') await r.setMode('acceptEdits').catch(() => {});
+      }
+      hub.toAll({ t: 'config', patch: { allowBypass: on } });
+      return null;
+    },
+    // ---- remote access (Cloudflare Tunnel) and server health
+    'tunnel.start': (msg) => ctx.tunnel.start(msg.mode === 'token' ? 'token' : msg.mode === 'quick' ? 'quick' : undefined),
+    'tunnel.stop': () => { ctx.tunnel.stop(); return ctx.tunnel.snapshot(); },
+    'tunnel.install': async () => { await ctx.tunnel.install(); return ctx.tunnel.snapshot(); },
+    'monitor.get': () => ctx.monitor.last,
+
+    // ---- browser users (own page /u/<name>, only their identities)
+    'users.list': () => ({ users: ctx.security.users.list(), admin: ctx.security.adminName() }),
+    'users.create': async (msg) => {
+      const name = String(msg.name ?? '').trim().toLowerCase();
+      if (name === ctx.security.adminName()) throw new UserError('Der Name gehört dem Admin.');
+      let browsers = (Array.isArray(msg.browsers) ? msg.browsers : []).map(String).filter((id) => ctx.browsers.profiles.has(id));
+      ctx.security.users.create({ name, password: msg.password, browsers: [] }, [ctx.security.adminName()]); // validates first
+      if (msg.ownBrowser !== false) browsers = [(await ctx.browsers.create({ name: `Nutzer ${name}`, owner: name })).id, ...browsers];
+      ctx.security.users.setBrowsers(name, browsers);
+      return { users: ctx.security.users.list() };
+    },
+    'users.password': (msg) => {
+      const name = String(msg.name ?? '');
+      ctx.security.users.setPassword(name, msg.password);
+      ctx.security.dropUserSessions(name);
+      ctx.enforceSessions();
+      return { users: ctx.security.users.list() };
+    },
+    'users.browsers': (msg) => {
+      const ids = (Array.isArray(msg.browsers) ? msg.browsers : []).map(String).filter((id) => ctx.browsers.profiles.has(id));
+      ctx.security.users.setBrowsers(String(msg.name ?? ''), ids);
+      for (const c of hub.clients) if (c.user === msg.name) ctx.helloPayload(c).then((h) => hub.send(c, { t: 'hello', ...h }));
+      return { users: ctx.security.users.list() };
+    },
+    'users.remove': (msg) => {
+      const name = String(msg.name ?? '');
+      ctx.security.users.remove(name);
+      ctx.security.dropUserSessions(name);
+      ctx.enforceSessions();
+      return { users: ctx.security.users.list() };
+    },
     'security.status': (_msg, client) => ctx.security.status(client.session),
     'security.setPassword': (msg, client) => {
       ctx.security.setPassword({ password: msg.password, current: msg.current, sessionId: client.session, ip: client.ip });
@@ -232,6 +291,7 @@ export function createActions(ctx) {
   return async (msg, client) => {
     const fn = actions[msg.t];
     if (!fn) throw new UserError(`Unbekannte Aktion: ${msg.t}`);
+    ctx.access.check(msg, client); // browser users: only their own identities
     return fn(msg, client);
   };
 }

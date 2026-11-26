@@ -25,7 +25,7 @@ function flattenCommands(items: Item[], out: Item[] = []) {
 function applyFilter(items: Item[], f: Filter) {
   if (f === 'all') return items;
   if (f === 'commands') return flattenCommands(items);
-  return items.filter((i) => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'output' || i.kind === 'turn' || (i.kind === 'note' && i.level !== 'dim'));
+  return items.filter((i) => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'output' || i.kind === 'turn' || (i.kind === 'note' && i.level !== 'dim') || i.kind === 'denied');
 }
 
 export function TimelineView({ extra }: { extra?: ReactNode } = {}) {

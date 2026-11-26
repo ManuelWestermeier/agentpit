@@ -5,6 +5,8 @@ import { act } from '../lib/store';
 import type { PermissionRequest } from '../lib/types';
 import { conn } from '../lib/ws';
 import { DiffView } from './items/DiffView';
+import { UnlockBypass } from './Permissions';
+import { useStore } from '../lib/store';
 import { Markdown } from './items/Markdown';
 
 /** Open approvals of the active project, pinned above the composer. */
@@ -31,6 +33,9 @@ function PermCard({ req, projectId }: { req: PermissionRequest; projectId: strin
   const [cmd, setCmd] = useState<string>(isCmd ? String(i.command ?? '') : '');
   const [reason, setReason] = useState('');
   const [denying, setDenying] = useState(false);
+  const [unlock, setUnlock] = useState(false);
+  const allowBypass = useStore((s) => s.hello?.config.allowBypass);
+  const allowAll = () => (allowBypass ? act(() => conn.call('allowAll', { projectId })) : setUnlock(true));
   const edited = isCmd && cmd !== String(i.command ?? '');
   const title = req.title ?? `Claude möchte ${req.displayName ?? req.toolName} verwenden`;
 
@@ -67,11 +72,13 @@ function PermCard({ req, projectId }: { req: PermissionRequest; projectId: strin
       <div className="perm-actions">
         <button className="btn primary" onClick={() => allow(false)}>{edited ? 'Geänderten Befehl ausführen' : 'Erlauben'}</button>
         {req.canAlways && !edited && <button className="btn" onClick={() => allow(true)} title={req.access ? 'Für dieses Projekt merken' : 'Regel in .claude/settings.local.json speichern'}>Immer erlauben</button>}
+        {!req.access && <button className="btn ghost" onClick={allowAll} title="Modus „Alles erlauben“ für diese Session, alle offenen Anfragen freigeben">Für diese Session alles erlauben</button>}
         <span className="spacer" />
         {denying
           ? <button className="btn danger" onClick={() => respond(projectId, req.id, { decision: 'deny', message: reason || undefined })}>Ablehnen senden</button>
           : <button className="btn danger" onClick={() => setDenying(true)}>Ablehnen …</button>}
       </div>
+      {unlock && <UnlockBypass onDone={() => { setUnlock(false); act(() => conn.call('allowAll', { projectId })); }} />}
     </div>
   );
 }

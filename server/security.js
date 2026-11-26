@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cliCmd } from './config.js';
+import { USER_RE, Users } from './users.js';
 import { UserError, safeEqual } from './util.js';
 
 const COOKIE = 'cockpit_s';
@@ -49,7 +50,7 @@ export function hashPassword(password, rev = 1) {
   const hash = crypto.scryptSync(String(password), salt, 64, SCRYPT);
   return { v: 1, rev, salt: salt.toString('base64'), hash: hash.toString('base64'), at: Date.now() };
 }
-function verifyPassword(password, rec) {
+export function verifyPassword(password, rec) {
   if (!rec?.salt || !rec?.hash) return false;
   const hash = crypto.scryptSync(String(password), Buffer.from(rec.salt, 'base64'), 64, SCRYPT);
   const want = Buffer.from(rec.hash, 'base64');
@@ -89,6 +90,11 @@ function readForm(req, limit = 4096) {
  *    X-Forwarded-Host/-Proto/-For are honoured only when the TCP peer is loopback.
  *  - Origin check for WebSocket upgrades and every non-GET request (CSRF / cross-site WebSocket).
  *  - Failed logins: 5 per client per minute, plus a global brake against distributed guessing.
+ *  - Users: the admin (cockpit password, everything) and browser users (data/users.json) who only get
+ *    their own page /u/<name> with the browser identities the admin gave them. Their sessions are
+ *    fenced in here (HTTP) and in the WebSocket hub/actions (server/access.js).
+ *  - First run from this machine (localhost, no proxy) needs no setup code – whoever sits at the
+ *    server owns it. Through a tunnel/domain the code from the server console is required.
  */
 export function createSecurity({ config, port = config.port }) {
   const dir = config.dataDir;
@@ -107,6 +113,8 @@ export function createSecurity({ config, port = config.port }) {
     return pwCache.rec;
   };
   const rev = () => password()?.rev ?? 0;
+  const adminName = () => password()?.user || 'admin';
+  const users = new Users({ dataDir: dir, hashPassword, verifyPassword, validatePassword });
 
   // one-time setup code while no password exists (also readable via `npm run link`)
   let setupCode = null;
@@ -178,13 +186,18 @@ export function createSecurity({ config, port = config.port }) {
     const id = sha(raw);
     const s = sessions.get(id);
     if (!s) return null;
-    if (s.rev !== rev() || Date.now() - s.seen > SESSION_IDLE_MS) { sessions.delete(id); persistSoon(); return null; }
+    if (!sessionCurrent(s)) { sessions.delete(id); persistSoon(); return null; }
     if (Date.now() - s.seen > 60_000) { s.seen = Date.now(); persistSoon(); }
     return { id, ...s };
   };
-  const createSession = (req, res, via) => {
+  /** Admin sessions end with a new cockpit password, user sessions with a new password of that user (or its deletion). */
+  function sessionCurrent(s) {
+    if (Date.now() - s.seen > SESSION_IDLE_MS) return false;
+    return s.user ? users.rev(s.user) === s.urev : s.rev === rev();
+  }
+  const createSession = (req, res, via, user = null) => {
     const raw = crypto.randomBytes(32).toString('base64url');
-    const s = { rev: rev(), via, created: Date.now(), seen: Date.now(), ip: clientIp(req), host: requestHost(req), ua: String(req.headers['user-agent'] ?? '').slice(0, 200) };
+    const s = { rev: rev(), ...(user ? { user, urev: users.rev(user) } : {}), via, created: Date.now(), seen: Date.now(), ip: clientIp(req), host: requestHost(req), ua: String(req.headers['user-agent'] ?? '').slice(0, 200) };
     sessions.set(sha(raw), s);
     persist();
     const secure = requestProto(req) === 'https' ? '; Secure' : '';
@@ -192,7 +205,7 @@ export function createSecurity({ config, port = config.port }) {
   };
   const clearCookie = (res) => res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
   // drop sessions of an older password revision
-  for (const [id, s] of sessions) if (s.rev !== rev()) sessions.delete(id);
+  for (const [id, s] of sessions) if (!sessionCurrent(s)) sessions.delete(id);
 
   // ---- brute-force brake
   const failures = new Map(); // ip → { n, until }
@@ -211,10 +224,10 @@ export function createSecurity({ config, port = config.port }) {
   };
   const succeed = (ip) => failures.delete(ip);
 
-  function savePassword(pw) {
+  function savePassword(pw, user = adminName()) {
     const err = validatePassword(pw);
     if (err) throw new UserError(err);
-    const next = hashPassword(pw, rev() + 1);
+    const next = { ...hashPassword(pw, rev() + 1), user };
     writeJson(pwFile, next);
     ensureSetupCode();
     return next.rev;
@@ -250,25 +263,36 @@ export function createSecurity({ config, port = config.port }) {
       const body = await readForm(req).catch(() => new URLSearchParams());
       if (req.path === '/login') {
         const rec = password();
-        if (rec && verifyPassword(body.get('password') ?? '', rec)) {
+        const name = String(body.get('username') ?? '').trim().toLowerCase();
+        if (rec && (!name || name === adminName()) && verifyPassword(body.get('password') ?? '', rec)) {
           succeed(ip);
           trustHost(host, proto);
           createSession(req, res, 'password');
           return res.redirect(302, '/');
         }
+        if (name && name !== adminName() && USER_RE.test(name) && users.check(name, body.get('password') ?? '') != null) {
+          succeed(ip);
+          trustHost(host, proto);
+          createSession(req, res, 'password', name);
+          users.touchLogin(name);
+          return res.redirect(302, '/u/' + name + '/');
+        }
         fail(ip);
-        return page(401, authPage({ mode, error: rec ? 'Falsches Passwort.' : 'Noch kein Passwort – bitte einrichten.' }));
+        return page(401, authPage({ mode, user: name, error: rec ? 'Name oder Passwort falsch.' : 'Noch kein Passwort – bitte einrichten.' }));
       }
-      // first-run setup through the setup code
+      // first run: from this machine without code, through a tunnel/domain with the setup code
       if (password()) return page(409, authPage({ mode: 'login', error: 'Passwort ist bereits gesetzt.' }));
       const code = String(body.get('code') ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (!setupCode || !safeEqual(code, setupCode.replace('-', ''))) { fail(ip); return page(401, authPage({ mode, error: `Einrichtungscode stimmt nicht (steht in der Server-Konsole bzw. ${cliCmd('link')}).` })); }
+      const local = isLocalRequest(req);
+      const admin = String(body.get('username') ?? '').trim().toLowerCase() || 'admin';
+      if (!USER_RE.test(admin)) return page(400, authPage({ mode, local, error: 'Name: 2–32 Zeichen, a–z, 0–9, Punkt, Minus, Unterstrich.' }));
+      if (!local && (!setupCode || !safeEqual(code, setupCode.replace('-', '')))) { fail(ip); return page(401, authPage({ mode, local, error: `Einrichtungscode stimmt nicht (steht in der Server-Konsole bzw. ${cliCmd('link')}).` })); }
       const pw = body.get('password') ?? '';
-      if (pw !== (body.get('password2') ?? '')) return page(400, authPage({ mode, error: 'Passwörter stimmen nicht überein.' }));
+      if (pw !== (body.get('password2') ?? '')) return page(400, authPage({ mode, local, error: 'Passwörter stimmen nicht überein.' }));
       const err = validatePassword(pw);
-      if (err) return page(400, authPage({ mode, error: err }));
+      if (err) return page(400, authPage({ mode, local, error: err }));
       succeed(ip);
-      savePassword(pw);
+      savePassword(pw, admin);
       trustHost(host, proto);
       createSession(req, res, 'password');
       return res.redirect(302, '/');
@@ -280,10 +304,20 @@ export function createSecurity({ config, port = config.port }) {
       clearCookie(res);
       return res.redirect(302, '/');
     }
+    const userPage = /^\/u\/([a-z0-9][a-z0-9._-]{1,31})(\/|$)/.exec(req.path)?.[1] ?? null;
     if (!session || !hostTrusted(host)) {
       if (req.path.startsWith('/api/') || req.path.startsWith('/media/')) return res.status(401).json({ error: 'Nicht angemeldet' });
       if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(401).end();
-      return page(401, authPage({ mode: password() ? 'login' : 'setup', newHost: !hostTrusted(host) ? host : null }));
+      return page(401, authPage({ mode: password() ? 'login' : 'setup', user: userPage ?? '', local: isLocalRequest(req), newHost: !hostTrusted(host) ? host : null }));
+    }
+    if (session.user) {
+      // browser user: own page and its assets, the upload for the own browser's file chooser – nothing else
+      const own = '/u/' + session.user + '/';
+      if (req.method === 'GET' && (req.path === '/' || (userPage && userPage !== session.user))) return res.redirect(302, own);
+      const read = req.method === 'GET' || req.method === 'HEAD';
+      const allowed = read ? !req.path.startsWith('/api/') && !req.path.startsWith('/media/')
+        : req.method === 'POST' && /^\/api\/browsers\/[a-z0-9-]+\/upload$/.test(req.path);
+      if (!allowed) return res.status(403).json({ error: 'Kein Zugriff' });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       if (!originOk(req)) return res.status(403).json({ error: 'Ungültige Herkunft (Origin)' });
@@ -308,11 +342,18 @@ export function createSecurity({ config, port = config.port }) {
     isLocalRequest,
     hostOk: (req) => hostTrusted(requestHost(req)),
     hasPassword: () => !!password(),
+    users,
+    adminName,
     trustedOrigins: () => [...staticOrigins, ...learned.map((h) => h.origin)],
     setupCode: () => ensureSetupCode(),
     sessionValid: (id) => {
       const s = sessions.get(id);
-      return !!s && s.rev === rev() && Date.now() - s.seen < SESSION_IDLE_MS;
+      return !!s && sessionCurrent(s);
+    },
+    /** A user was deleted or got a new password from the admin: end their sessions now. */
+    dropUserSessions(name) {
+      for (const [id, s] of sessions) if (s.user === name) sessions.delete(id);
+      persist();
     },
 
     /** Snapshot for the account dialog. */
@@ -321,8 +362,9 @@ export function createSecurity({ config, port = config.port }) {
         hasPassword: !!password(),
         passwordAt: password()?.at ?? null,
         hosts: [...[...staticHosts].filter((h) => !isLocalHost(h)).map((h) => ({ host: h, fixed: true })), ...learned.map((h) => ({ host: h.host, origin: h.origin, addedAt: h.addedAt, fixed: false }))],
-        sessions: [...sessions.entries()].filter(([, s]) => s.rev === rev())
-          .map(([id, s]) => ({ id: id.slice(0, 16), via: s.via, ip: s.ip, host: s.host, ua: s.ua, created: s.created, seen: s.seen, current: id === currentId }))
+        admin: adminName(),
+        sessions: [...sessions.entries()].filter(([, s]) => sessionCurrent(s))
+          .map(([id, s]) => ({ id: id.slice(0, 16), user: s.user ?? null, via: s.via, ip: s.ip, host: s.host, ua: s.ua, created: s.created, seen: s.seen, current: id === currentId }))
           .sort((a, b) => b.seen - a.seen),
       };
     },
@@ -338,6 +380,7 @@ export function createSecurity({ config, port = config.port }) {
       const keep = sessions.get(sessionId);
       const newRev = savePassword(pw);
       for (const [id, s] of sessions) {
+        if (s.user) continue; // browser users keep their own passwords
         if (id === sessionId && keep) s.rev = newRev;
         else sessions.delete(id);
       }
@@ -371,6 +414,11 @@ export function createSecurity({ config, port = config.port }) {
 // ---- pages ------------------------------------------------------------------------
 /** Login/setup page in English for browsers that do not prefer German (longest phrases first). */
 const AUTH_EN = [
+  ['Lege den Admin-Zugang fest, der ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel.', 'Set up the admin access that protects every access from now on – local, via a domain or a tunnel.'],
+  ['Den Einrichtungscode zeigt die Server-Konsole beim Start (oder', 'The setup code is shown in the server console at start (or'],
+  ['Name: 2–32 Zeichen, a–z, 0–9, Punkt, Minus, Unterstrich.', 'Name: 2–32 characters, a–z, 0–9, dot, dash, underscore.'],
+  ['Name oder Passwort falsch.', 'Wrong name or password.'],
+  ['Admin-Name', 'Admin name'],
   ['Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder', 'Choose the password that protects every access from now on – local, via a domain or a tunnel. The setup code is shown in the server console at start (or'],
   ['Ein Passwortmanager-Passwort oder vier zufällige Wörter.', 'A password-manager password or four random words.'],
   ['– sie wird nach erfolgreicher Anmeldung freigegeben.', '– it is allowed after a successful sign-in.'],
@@ -398,15 +446,16 @@ const AUTH_EN = [
 ];
 const toEnglish = (html) => AUTH_EN.reduce((s, [de, en]) => s.split(de).join(en), html);
 
-function authPage({ mode, error = null, newHost = null }) {
+function authPage({ mode, error = null, newHost = null, user = '', local = false }) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const setup = mode === 'setup';
   const body = setup
     ? `<h1>Cockpit einrichten</h1>
-<p>Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder <code>${cliCmd('link')}</code>).</p>
+<p>Lege den Admin-Zugang fest, der ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel.${local ? '' : ` Den Einrichtungscode zeigt die Server-Konsole beim Start (oder <code>${cliCmd('link')}</code>).`}</p>
 ${error ? `<p class="err">${esc(error)}</p>` : ''}
 <form method="post" action="/setup">
-<label>Einrichtungscode<input name="code" autocomplete="one-time-code" placeholder="XXXX-XXXX" autocapitalize="characters" required autofocus></label>
+${local ? '' : '<label>Einrichtungscode<input name="code" autocomplete="one-time-code" placeholder="XXXX-XXXX" autocapitalize="characters" required autofocus></label>'}
+<label>Admin-Name<input name="username" autocomplete="username" value="admin" required></label>
 <label>Neues Passwort<input type="password" name="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" required></label>
 <label>Wiederholen<input type="password" name="password2" autocomplete="new-password" minlength="${MIN_PASSWORD}" required></label>
 <button>Passwort setzen und anmelden</button></form>
@@ -414,7 +463,7 @@ ${error ? `<p class="err">${esc(error)}</p>` : ''}
     : `<h1>Anmelden</h1>
 ${newHost ? `<p>Neue Adresse <code>${esc(newHost)}</code> – sie wird nach erfolgreicher Anmeldung freigegeben.</p>` : ''}
 ${error ? `<p class="err">${esc(error)}</p>` : ''}
-<form method="post" action="/login"><input type="password" name="password" autocomplete="current-password" placeholder="Passwort" autofocus required><button>Anmelden</button></form>`;
+<form method="post" action="/login"><label>Name<input name="username" autocomplete="username" value="${esc(user)}" placeholder="admin" autocapitalize="none"${user ? '' : ' autofocus'}></label><label>Passwort<input type="password" name="password" autocomplete="current-password"${user ? ' autofocus' : ''} required></label><button>Anmelden</button></form>`;
   return `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Cockpit – ${setup ? 'Einrichten' : 'Anmelden'}</title>
 <style>

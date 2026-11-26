@@ -7,6 +7,7 @@ import type { Item } from '../../lib/timeline';
 import { conn } from '../../lib/ws';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
+import { DeniedNotice } from '../Permissions';
 
 const DECISION: Record<string, string> = { allow: 'erlaubt', always: 'dauerhaft erlaubt', deny: 'abgelehnt' };
 
@@ -27,6 +28,7 @@ export function ItemBody({ item }: { item: Item }) {
     case 'thinking': return <Thinking text={item.text} />;
     case 'tool': return <ToolCard item={item} />;
     case 'output': return <div className={`output${item.error ? ' error' : ''}`}><Markdown text={item.text} /></div>;
+    case 'denied': return <ActiveDenied mode={item.mode} tools={item.tools} />;
     case 'note': return <Note level={item.level} text={item.text} detail={item.detail} />;
     case 'turn':
       return (
@@ -96,6 +98,11 @@ function Thinking({ text }: { text: string }) {
       {open && <pre>{text}</pre>}
     </details>
   );
+}
+
+function ActiveDenied({ mode, tools }: { mode: string; tools: { name: string; detail?: string }[] }) {
+  const projectId = useStore((s) => s.activeId);
+  return projectId ? <DeniedNotice projectId={projectId} mode={mode} tools={tools} /> : null;
 }
 
 function Note({ level, text, detail }: { level: string; text: string; detail?: string }) {

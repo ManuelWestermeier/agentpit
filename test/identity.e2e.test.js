@@ -11,6 +11,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Browsers } from '../server/browsers.js';
 import { CdpRelay } from '../server/cdp-relay.js';
+import { Cdp } from '../server/cdp.js';
 import { findBrowserExecutable, playwrightMcpCli } from '../server/environment.js';
 import { Store } from '../server/store.js';
 
@@ -27,6 +28,16 @@ function makeBrowsers(dir) {
   const store = new Store(dir);
   const ctx = { store, root: ROOT, config: { maxBrowsers: 4, trashDir: path.join(dir, 'trash') }, env: { browser: {} }, projects: { list: async () => [] }, hub: { send() {}, toAll() {} } };
   return { b: new Browsers(ctx), store };
+}
+
+/** Evaluates in a tab from a separate test connection. */
+async function evalIn(port, targetId, expression) {
+  const v = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json());
+  const c = await Cdp.connect(v.webSocketDebuggerUrl);
+  try {
+    const sid = await c.attach(targetId);
+    return (await c.send('Runtime.evaluate', { expression, returnByValue: true }, sid)).result.value;
+  } finally { c.close(); }
 }
 
 /** text of a Playwright MCP tool result */
@@ -96,8 +107,7 @@ describe(`Identitäten über CDP-Relay (${engine})`, { skip, concurrency: false 
   });
 
   test('Cockpit-Neustart: laufender Browser wird übernommen statt doppelt gestartet', { timeout: 60_000 }, async () => {
-    const page = b.running.get(ids.de).active;
-    await page.goto('data:text/html,<title>bleibt-offen</title>');
+    await b.navigate(ids.de, { action: 'go', url: 'data:text/html,<title>bleibt-offen</title>' });
     const port = b.running.get(ids.de).port;
     // a second cockpit process on the same data, while the first one's browser keeps running
     const second = makeBrowsers(dir);
@@ -106,9 +116,9 @@ describe(`Identitäten über CDP-Relay (${engine})`, { skip, concurrency: false 
     const e = second.b.running.get(ids.de);
     assert.equal(e.proc, null, 'kein neuer Browser-Prozess');
     assert.equal(e.port, port);
-    const titles = await Promise.all(e.context.pages().map((p) => p.title()));
+    const titles = [...e.pages.values()].map((t) => t.title);
     assert.ok(titles.includes('bleibt-offen'), `offene Seite erhalten: ${titles}`);
-    await e.browser.close().catch(() => {}); // disconnect only (connectOverCDP)
+    e.cdp.close(); // disconnect only – the browser keeps running for the first cockpit
   });
 
   test('eine Identität übernimmt nie den Browser einer anderen', { timeout: 60_000 }, async () => {
@@ -123,7 +133,7 @@ describe(`Identitäten über CDP-Relay (${engine})`, { skip, concurrency: false 
     const e = other.b.running.get(ids.en);
     assert.notEqual(e.port, dePort, 'eigener Port statt fremdem Browser');
     assert.ok(e.proc, 'eigener Browser-Prozess');
-    const lang = await e.active.evaluate(() => navigator.language);
+    const lang = await evalIn(e.port, e.active, 'navigator.language');
     assert.equal(lang, 'en-US');
     await other.b.stop(ids.en);
   });

@@ -4,6 +4,7 @@ import { estimate } from '../lib/forecast';
 import { MODE_LABEL, fmtPct, fmtUsd, shortModel } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
 import { act, useStore } from '../lib/store';
+import { useModeSwitch } from './Permissions';
 import { conn } from '../lib/ws';
 
 async function upload(projectId: string, file: File) {
@@ -178,7 +179,7 @@ function RunSettings() {
   const models = (catalog?.models ?? []).filter((m) => m.value !== 'default');
   const cur = models.find((m) => m.value === model || m.resolvedModel === model);
   const efforts = cur?.supportsEffort ? cur.supportedEffortLevels : (catalog?.models ?? []).find((m) => m.supportsEffort)?.supportedEffortLevels ?? [];
-  const modes = cfg.permissionModes.filter((m) => m !== 'bypassPermissions' || cfg.allowBypass);
+  const modes = cfg.permissionModes;
   return (
     <div className="runset">
       <select className="mini-select" value={cur?.value ?? model ?? ''} title="Modell" aria-label="Modell"
@@ -187,10 +188,7 @@ function RunSettings() {
         {models.map((m) => <option key={m.value} value={m.value}>{m.displayName}</option>)}
         {model && !cur && <option value={model}>{shortModel(model)}</option>}
       </select>
-      <select className="mini-select" value={mode} title="Freigabe-Modus" aria-label="Freigabe-Modus"
-        onChange={(e) => act(() => conn.call('setMode', { projectId: pid, mode: e.target.value }))}>
-        {modes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
-      </select>
+      <ModeSelect projectId={pid} mode={mode} modes={modes} allowBypass={cfg.allowBypass} />
       {efforts.length > 0 && (
         <select className="mini-select" value={effort} title="Denkaufwand (Effort)" aria-label="Effort"
           onChange={(e) => act(() => conn.call('setEffort', { projectId: pid, effort: e.target.value }))}>
@@ -200,6 +198,20 @@ function RunSettings() {
       )}
       <TurnLimits />
     </div>
+  );
+}
+
+/** Permission mode; "Alles erlauben" stays visible while locked and explains how to unlock it. */
+function ModeSelect({ projectId, mode, modes, allowBypass }: { projectId: string; mode: string; modes: string[]; allowBypass: boolean }) {
+  const sw = useModeSwitch(projectId);
+  return (
+    <span className="mode-wrap">
+      <select className="mini-select" value={mode} title="Freigabe-Modus – gilt sofort für die laufende Session" aria-label="Freigabe-Modus"
+        onChange={(e) => sw.set(e.target.value)}>
+        {modes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}{m === 'bypassPermissions' && !allowBypass ? ' (gesperrt)' : ''}</option>)}
+      </select>
+      {sw.panel}
+    </span>
   );
 }
 

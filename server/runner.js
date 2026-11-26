@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { COCKPIT_SAFE_TOOLS, cockpitMcp } from './cockpit-mcp.js';
+import { BYPASS_LOCKED } from './config.js';
 import { playwrightMcpCli } from './environment.js';
 import { SHARED_DIR_NAME } from './projects.js';
 import { addModelUsage, diffModelUsage, emptyStats } from './session-stats.js';
@@ -92,6 +93,15 @@ const STATE_FROM_CLI = { running: 'running', idle: 'ready', requires_action: 'wa
  * One Claude Code process (Agent SDK query in streaming-input mode) per project.
  * Started lazily on the first prompt, resumed by session id, closed after idle timeout.
  */
+/** Requests that are decisions of the user, never auto-approved. */
+const NEEDS_USER = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+function denialDetail(input) {
+  if (!input || typeof input !== 'object') return '';
+  const v = input.command ?? input.file_path ?? input.url ?? input.pattern ?? input.path ?? '';
+  return String(v).slice(0, 200);
+}
+
 export class Runner extends EventEmitter {
   constructor(ctx, project) {
     super();
@@ -197,13 +207,13 @@ export class Runner extends EventEmitter {
     }
     const sharedDir = await ensureSharedDir(config.projectsDir);
 
-    const mode = p.mode === 'bypassPermissions' && !config.allowBypass ? 'acceptEdits' : p.mode;
+    const mode = p.mode === 'bypassPermissions' && !this.ctx.config.allowBypass ? 'acceptEdits' : p.mode;
     return {
       cwd: p.dir,
       additionalDirectories: [sharedDir],
       model: p.model || undefined,
       permissionMode: mode || 'default',
-      allowDangerouslySkipPermissions: config.allowBypass || undefined,
+      allowDangerouslySkipPermissions: this.ctx.config.allowBypass || undefined, // may be unlocked at runtime
       effort: p.effort || undefined,
       includePartialMessages: true,
       settingSources: ['user', 'project', 'local'],
@@ -322,7 +332,10 @@ export class Runner extends EventEmitter {
     }
     this.sessionId = sessionId;
     await this.#loadStats(sessionId, fork ? resume : null);
-    this.proc = { totalCost: 0, modelUsage: {}, initLogged: false, startedAt: Date.now() };
+    // bypassCapable: this process may switch to bypassPermissions (the CLI needs the flag at start)
+    this.proc = { totalCost: 0, modelUsage: {}, initLogged: false, startedAt: Date.now(), bypassCapable: !!options.allowDangerouslySkipPermissions };
+    this.autoAllow = false;
+    this.deniedByUser = new Set();
     this.seen.clear();
     this.stderr = new TailBuffer(16_000);
     this.error = null;
@@ -504,9 +517,19 @@ export class Runner extends EventEmitter {
     this.emitStatus();
   }
 
+  /** Applies to the running session at once (setPermissionMode), not only after a restart. */
   async setMode(mode) {
+    if (mode === 'bypassPermissions' && !this.ctx.config.allowBypass) throw new UserError(BYPASS_LOCKED);
     this.project = await this.ctx.projects.update(this.projectId, { mode });
-    if (this.q) await this.q.setPermissionMode(mode);
+    this.autoAllow = false;
+    if (this.q) {
+      if (mode === 'bypassPermissions' && !this.proc.bypassCapable) {
+        // unlocked after this process started: the CLI refuses the switch – approve in canUseTool
+        // until the next process start, which gets the flag
+        this.autoAllow = true;
+        await this.q.setPermissionMode('acceptEdits').catch(() => {});
+      } else await this.q.setPermissionMode(mode);
+    }
     this.mode = mode;
     this.#log('cockpit', 'setting', { key: 'mode', value: mode });
     this.emitStatus();
@@ -540,8 +563,22 @@ export class Runner extends EventEmitter {
 
   // ---------------------------------------------------------------- permissions
 
+  /**
+   * "Für diese Session alles erlauben": switch to bypassPermissions and approve every open request.
+   * Questions (AskUserQuestion), plan approval and access to other projects' resources (requestAccess)
+   * still need the user – they are not risky actions but decisions only the user can make.
+   */
+  async allowAll() {
+    if (!this.ctx.config.allowBypass) throw new UserError(BYPASS_LOCKED);
+    await this.setMode('bypassPermissions');
+    for (const [id, e] of [...this.pending]) {
+      if (!e.access && !NEEDS_USER.has(e.req.toolName)) this.respond(id, { decision: 'allow' });
+    }
+  }
+
   #canUseTool(toolName, input, opts) {
     if (SAFE_BROWSER_TOOLS.has(toolName) || COCKPIT_SAFE_TOOLS.has(toolName)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
+    if (this.autoAllow && !NEEDS_USER.has(toolName)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
     return new Promise((resolve) => {
       const id = opts.requestId || uuid();
       const suggestions = Array.isArray(opts.suggestions) ? opts.suggestions : [];
@@ -638,6 +675,7 @@ export class Runner extends EventEmitter {
       }
       case 'deny':
         result = { behavior: 'deny', message: String(decision.message || 'Vom Nutzer abgelehnt.').slice(0, 4000) };
+        if (req.toolUseId) this.deniedByUser?.add(req.toolUseId);
         break;
       default:
         throw new UserError('Unbekannte Entscheidung');
@@ -865,6 +903,12 @@ export class Runner extends EventEmitter {
     // final answer of the turn – read by parent sessions (session_status / session_wait)
     this.lastResult = { text: String(msg.result ?? '').slice(0, 20_000), isError: !!msg.is_error, at: Date.now(), costUsd: delta };
     if (!msg.local_command && msg.result) this.appendContext('claude', msg.result);
+    // denied without asking (dontAsk, deny rules): make it visible in the chat, with a way out
+    const silent = (msg.permission_denials ?? []).filter((d) => !this.deniedByUser?.has(d.tool_use_id));
+    this.deniedByUser?.clear();
+    if (silent.length) {
+      this.#log('cockpit', 'permission_denied', { mode: this.mode, tools: silent.slice(0, 20).map((d) => ({ name: d.tool_name, detail: denialDetail(d.tool_input) })) });
+    }
     setImmediate(() => this.#maybeCompact(msg));
     this.ctx.limits.addCost(delta);
     this.turn = null;

@@ -73,8 +73,8 @@ export const MODE_LABEL: Record<string, string> = {
   acceptEdits: 'Edits automatisch',
   auto: 'Auto (Klassifikator)',
   plan: 'Planen',
-  dontAsk: 'Nur Erlaubtes',
-  bypassPermissions: 'Ohne Nachfrage',
+  dontAsk: 'Nicht fragen – Rest wird abgelehnt',
+  bypassPermissions: 'Alles erlauben',
 };
 
 export const STATE_LABEL: Record<string, string> = {

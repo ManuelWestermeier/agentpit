@@ -283,3 +283,143 @@ test('AsyncQueue delivers in order and ends on close', async () => {
   for await (const x of q) got.push(x);
   assert.deepEqual(got, [1, 2, 3]);
 });
+
+test('UI and media are served from folders with a dot in the path (npx: ~/.npm/_npx, data: ~/.agentpit)', async () => {
+  const express = (await import('express')).default;
+  const { mountStatic } = await import('../server/static.js');
+  const base = path.join(tmp('dots'), '.agentpit-test');
+  const webDist = path.join(base, '.npm', '_npx', 'abc', 'node_modules', 'agentpit', 'web', 'dist');
+  const mediaDir = path.join(base, '.agentpit', 'data', 'media');
+  fs.mkdirSync(webDist, { recursive: true });
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.writeFileSync(path.join(webDist, 'index.html'), '<!doctype html><title>agentpit</title>');
+  fs.writeFileSync(path.join(webDist, '.env'), 'SECRET=1');
+  const media = `${'a'.repeat(24)}.png`;
+  fs.writeFileSync(path.join(mediaDir, media), 'png');
+  const app = express();
+  app.use((req, _res, next) => { req.cockpitSession = { id: 'test' }; next(); }); // stands in for a valid session
+  assert.equal(mountStatic(app, { webDist, mediaDir, hasUi: true }), true);
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const root = await fetch(`${url}/`);
+    assert.equal(root.status, 200);
+    assert.match(await root.text(), /<title>agentpit<\/title>/);
+    assert.equal((await fetch(`${url}/projekt/demo`)).status, 200); // SPA route
+    const m = await fetch(`${url}/media/${media}`);
+    assert.equal(m.status, 200);
+    assert.equal(await m.text(), 'png');
+    assert.equal((await fetch(`${url}/media/..%2F..%2Fx.png`)).status, 404);
+    assert.doesNotMatch(await (await fetch(`${url}/.env`)).text(), /SECRET/); // real dotfiles stay hidden
+  } finally {
+    server.close();
+  }
+});
+
+test('findBrowserExecutable finds Playwright Chromium in chrome-linux64, chrome-linux and chrome-linux-arm64', async () => {
+  const { findBrowserExecutable, _test } = await import('../server/environment.js');
+  const base = tmp('pw');
+  const mk = (rev, sub, ...file) => { const f = path.join(base, `chromium-${rev}`, sub, ...file); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); fs.chmodSync(f, 0o755); return f; };
+  const x64 = mk(1200, 'chrome-linux64', 'chrome');
+  const old = mk(1201, 'chrome-linux', 'chrome');
+  const arm = mk(1255, 'chrome-linux-arm64', 'chrome');
+  const rev = (n) => path.join(base, `chromium-${n}`);
+  assert.deepEqual(_test.chromiumCandidates(rev(1255), 'linux', 'arm64'), [arm]);
+  assert.deepEqual(_test.chromiumCandidates(rev(1200), 'linux', 'x64'), [x64]);
+  assert.deepEqual(_test.chromiumCandidates(rev(1201), 'linux', 'x64'), [old]);
+  // both layouts in one revision: the CPU's own build first
+  mk(1300, 'chrome-linux64', 'chrome');
+  mk(1300, 'chrome-linux-arm64', 'chrome');
+  assert.match(_test.chromiumCandidates(rev(1300), 'linux', 'arm64')[0], /chrome-linux-arm64/);
+  assert.match(_test.chromiumCandidates(rev(1300), 'linux', 'x64')[0], /chrome-linux64/);
+  assert.match(_test.chromiumCandidates(rev(1300), 'darwin', 'arm64')[0] ?? 'none', /none/); // no mac folders here
+  // the real lookup on this machine, newest revision first
+  const own = process.platform === 'win32' ? mk(1400, 'chrome-win64', 'chrome.exe')
+    : process.platform === 'darwin' ? mk(1400, `chrome-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}`, 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
+      : mk(1400, process.arch === 'arm64' ? 'chrome-linux-arm64' : 'chrome-linux64', 'chrome');
+  const saved = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  process.env.PLAYWRIGHT_BROWSERS_PATH = base;
+  try { assert.equal(findBrowserExecutable('chromium'), own); } finally { process.env.PLAYWRIGHT_BROWSERS_PATH = saved; }
+});
+
+test('access: browser users get only their identities, admin everything', async () => {
+  const { createAccess } = await import('../server/access.js');
+  const users = { get: (n) => (n === 'anna' ? { name: 'anna', browsers: ['anna-b'] } : null) };
+  const a = createAccess({ security: { users, adminName: () => 'admin' } });
+  const admin = { user: null }, anna = { user: 'anna' };
+  assert.doesNotThrow(() => a.check({ t: 'project.create' }, admin));
+  assert.throws(() => a.check({ t: 'project.create' }, anna), /Kein Zugriff/);
+  assert.throws(() => a.check({ t: 'term.open' }, anna), /Kein Zugriff/);
+  assert.doesNotThrow(() => a.check({ t: 'browsers.input', id: 'anna-b' }, anna));
+  assert.throws(() => a.check({ t: 'browsers.input', id: 'other' }, anna), /diesen Browser/);
+  assert.equal(a.filter(anna, { t: 'projects', projects: [] }), null);
+  assert.equal(a.filter(anna, { t: 'bframe', profileId: 'other' }), null);
+  assert.ok(a.filter(anna, { t: 'bframe', profileId: 'anna-b' }));
+  const list = a.filter(anna, { t: 'browsers', browsers: { profiles: [{ id: 'anna-b' }, { id: 'x' }], status: { path: '/secret' } } });
+  assert.deepEqual(list.browsers.profiles.map((p) => p.id), ['anna-b']);
+  assert.deepEqual(list.browsers.status, {});
+  assert.equal(a.canUseBrowser({ user: 'anna' }, 'x'), false);
+  assert.equal(a.canUseBrowser({ id: 's' }, 'x'), true);
+});
+
+test('login: admin and browser users, first setup from localhost without code, users fenced in', async () => {
+  const express = (await import('express')).default;
+  const { createSecurity } = await import('../server/security.js');
+  const dataDir = tmp('sec');
+  let sec;
+  const app = express();
+  app.set('query parser', 'simple');
+  app.use((req, res, next) => sec.middleware(req, res, next));
+  app.get(/.*/, (req, res) => res.json({ ok: true, user: req.cockpitSession.user ?? null }));
+  app.post('/api/browsers/:id/upload', (_req, res) => res.json({ up: true }));
+  app.post('/api/x', (_req, res) => res.json({ x: true }));
+  const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
+  const port = server.address().port;
+  sec = createSecurity({ config: { dataDir, devOrigins: [], publicUrls: [] }, port });
+  const base = `http://localhost:${port}`;
+  const req = (p, opt = {}) => fetch(base + p, { redirect: 'manual', ...opt });
+  const form = (o) => ({ method: 'POST', body: new URLSearchParams(o), headers: { 'content-type': 'application/x-www-form-urlencoded', origin: base } });
+  const cookie = (r) => r.headers.get('set-cookie')?.split(';')[0];
+  try {
+    // first run, local: no setup code needed
+    const setup = await req('/setup', form({ username: 'chef', password: 'geheim123', password2: 'geheim123' }));
+    assert.equal(setup.status, 302);
+    const adminC = cookie(setup);
+    assert.ok(adminC);
+    assert.equal(sec.adminName(), 'chef');
+    assert.equal((await (await req('/', { headers: { cookie: adminC } })).json()).user, null);
+    // through a tunnel the setup would have needed the code – and login with the wrong name fails
+    assert.equal((await req('/login', form({ username: 'anna', password: 'geheim123' }))).status, 401);
+    sec.users.create({ name: 'anna', password: 'annas-pw', browsers: ['anna-b'] }, ['chef']);
+    const login = await req('/login', form({ username: 'anna', password: 'annas-pw' }));
+    assert.equal(login.status, 302);
+    assert.equal(login.headers.get('location'), '/u/anna/');
+    const annaC = cookie(login);
+    const home = await req('/', { headers: { cookie: annaC } });
+    assert.equal(home.status, 302);
+    assert.equal(home.headers.get('location'), '/u/anna/');
+    assert.equal((await req('/u/chef/', { headers: { cookie: annaC } })).headers.get('location'), '/u/anna/');
+    assert.equal((await (await req('/u/anna/', { headers: { cookie: annaC } })).json()).user, 'anna');
+    assert.equal((await req('/api/projects', { headers: { cookie: annaC } })).status, 403);
+    const post = (p, c) => req(p, { method: 'POST', headers: { cookie: c, origin: base, 'x-cockpit': '1', 'content-type': 'application/json' }, body: '{}' });
+    assert.equal((await post('/api/x', annaC)).status, 403);
+    assert.equal((await post('/api/browsers/anna-b/upload', annaC)).status, 200);
+    assert.equal((await post('/api/x', adminC)).status, 200);
+    // new password from the admin ends anna's sessions, admin stays signed in
+    sec.users.setPassword('anna', 'neu-pw-123');
+    assert.equal((await req('/u/anna/', { headers: { cookie: annaC } })).status, 401);
+    assert.equal((await req('/', { headers: { cookie: adminC } })).status, 200);
+  } finally { server.close(); sec.flush(); }
+});
+
+test('audio: fMP4 stream splits into init segment and fragments', async () => {
+  const { _test } = await import('../server/audio.js');
+  const box = (type, len = 16) => { const b = Buffer.alloc(len); b.writeUInt32BE(len, 0); b.write(type, 4, 'latin1'); return b; };
+  const inits = [], frags = [];
+  const s = new _test.Fmp4Splitter((i) => inits.push(i), (f) => frags.push(f));
+  const stream = Buffer.concat([box('ftyp', 20), box('moov', 40), box('moof', 24), box('mdat', 100), box('moof', 24), box('mdat', 50)]);
+  for (let i = 0; i < stream.length; i += 7) s.push(stream.subarray(i, i + 7)); // arbitrary chunking
+  assert.equal(inits.length, 1);
+  assert.equal(inits[0].length, 60);
+  assert.deepEqual(frags.map((f) => f.length), [124, 74]);
+});

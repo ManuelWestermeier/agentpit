@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { SetupPassword } from './components/Access';
 import { AccountsDialog } from './components/AccountsDialog';
 import { BrowserView } from './components/BrowserView';
+import { BrowserOnly } from './components/BrowserOnly';
 import { DataView } from './components/DataView';
 import { FilesView } from './components/FilesView';
 import { GitView } from './components/GitView';
@@ -39,6 +40,8 @@ export function App() {
       </div>
     );
   }
+
+  if (hello.user?.role === 'browser') return <><BrowserOnly /><Toasts /></>;
 
   let body;
   if (profileView) body = <BrowserView profileId={profileView} />;

@@ -1,4 +1,5 @@
-import { ArrowLeft, ArrowRight, Download, Gauge, Keyboard, Loader2, Maximize, Plus, Power, RotateCw, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Download, Expand, Gauge, Keyboard, Loader2, Maximize, Mic, MicOff, Minimize, Plus, Power, RotateCw, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { useRemoteAudio } from '../lib/remoteAudio';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react';
 import { act, useStore } from '../lib/store';
 import type { StreamSettings, StreamStats } from '../lib/types';
@@ -7,11 +8,13 @@ import { DEFAULT_STREAM, StreamControls, StreamStatsView } from './StreamSetting
 
 interface Tab { i: number; url: string; title: string; active: boolean }
 interface Dialog { type: string; message: string; defaultValue: string }
+interface FedCm { dialogType: string; title: string; subtitle: string; accounts: { email: string; name: string; picture?: string }[] }
+interface Notice { level: string; text: string; stalled?: boolean }
 
 const BUTTON: Record<number, string> = { 0: 'left', 1: 'middle', 2: 'right' };
 
 /** Live view + remote control of a browser identity (CDP screencast and input). */
-export function BrowserView({ profileId, compact = false }: { profileId: string; compact?: boolean }) {
+export function BrowserView({ profileId, compact = false, extra }: { profileId: string; compact?: boolean; extra?: React.ReactNode }) {
   const profile = useStore((s) => s.browsers?.profiles.find((p) => p.id === profileId));
   const status = useStore((s) => s.browsers?.status);
   const connected = useStore((s) => s.connected);
@@ -26,6 +29,14 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dialogText, setDialogText] = useState('');
+  const [fedcm, setFedcm] = useState<FedCm | null>(null);
+  const [chooser, setChooser] = useState<{ multiple: boolean } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [full, setFull] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const siteFull = useRef(false);
+  const audioOk = useStore((s) => (s.hello as { audio?: { available: boolean; reason: string | null } } | null)?.audio);
+  const av = useRemoteAudio(profileId);
   const moveQueued = useRef<null | { x: number; y: number; buttons: number }>(null);
   const touch = useRef<{ x: number; y: number; lastY: number; lastX: number; drag: boolean } | null>(null);
   // End-to-end flow control: confirm each frame once it is decoded and on screen. The server only
@@ -80,15 +91,60 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
       } else if (m.t === 'bstate') {
         if (m.stopped) { setHasFrame(false); setState({ url: '', title: '', tabs: [] }); return; }
         setState({ url: m.url, title: m.title, tabs: m.tabs ?? [] });
+        // the website went fullscreen (video, game): follow it, like a real browser would
+        if (!!m.fullscreen !== siteFull.current) {
+          siteFull.current = !!m.fullscreen;
+          if (m.fullscreen && !document.fullscreenElement) root.current?.requestFullscreen?.().catch(() => {});
+        }
       } else if (m.t === 'bdialog') {
+        if (m.closed) { setDialog(null); return; }
         setDialog({ type: m.type, message: m.message, defaultValue: m.defaultValue });
         setDialogText(m.defaultValue ?? '');
+      } else if (m.t === 'bfedcm') {
+        setFedcm(m.closed ? null : { dialogType: m.dialogType, title: m.title, subtitle: m.subtitle, accounts: m.accounts ?? [] });
+      } else if (m.t === 'bfile') {
+        setChooser({ multiple: !!m.multiple });
+      } else if (m.t === 'bnotice') {
+        setNotice(m.clear ? null : { level: m.level, text: m.text, stalled: m.stalled });
       }
     });
     return () => { off(); conn.send('browsers.view', { id: profileId, on: false }); };
   }, [profileId, connected, profile?.running, startNonce]);
 
   useEffect(() => { if (!editing) setUrl(state.url === 'about:blank' ? '' : state.url); }, [state.url, editing]);
+
+  // Fullscreen = the remote browser fills this screen: window resized to the stage, keys like Esc,
+  // Ctrl+W, F11 go to the website (Keyboard Lock, where the browser supports it).
+  useEffect(() => {
+    const onChange = () => {
+      const on = document.fullscreenElement === root.current;
+      setFull(on);
+      const nav = navigator as Navigator & { keyboard?: { lock?: (k?: string[]) => Promise<void>; unlock?: () => void } };
+      if (on) nav.keyboard?.lock?.().catch(() => {});
+      else {
+        nav.keyboard?.unlock?.();
+        if (siteFull.current) conn.send('browsers.nav', { id: profileId, action: 'exitFullscreen' }); // Esc leaves the site's fullscreen too
+      }
+      setTimeout(() => { stage.current?.focus({ preventScroll: true }); if (on && !siteFull.current) fit(); }, 250);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, [profileId]);
+  const toggleFull = () => (document.fullscreenElement ? document.exitFullscreen().catch(() => {}) : root.current?.requestFullscreen?.().catch(() => {}));
+
+  const chooseFiles = async (list: FileList | null) => {
+    setChooser(null);
+    const names: string[] = [];
+    try {
+      for (const f of Array.from(list ?? [])) {
+        const r = await fetch(`/api/browsers/${encodeURIComponent(profileId)}/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'x-cockpit': '1' }, body: f });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || r.statusText);
+        names.push(j.file);
+      }
+      await conn.call('browsers.files', { id: profileId, files: names });
+    } catch (e) { setError((e as Error).message); }
+  };
 
   const send = useCallback((ev: Record<string, unknown>) => conn.send('browsers.input', { id: profileId, ev }), [profileId]);
   const point = (clientX: number, clientY: number) => {
@@ -150,7 +206,7 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
     if (isPaste) return; // handled by the paste event with the local clipboard
     e.preventDefault();
     const text = e.key.length === 1 ? e.key : e.key === 'Enter' ? '\r' : undefined;
-    send({ kind: 'key', type, key: e.key, code: e.code, keyCode: e.keyCode, location: e.location, text, ...mods(e) });
+    send({ kind: 'key', type, key: e.key, code: e.code, keyCode: e.keyCode, location: e.location, text, repeat: e.repeat, ...mods(e) });
   };
 
   const nav = (action: string, target?: string) => act(() => conn.call('browsers.nav', { id: profileId, action, url: target }));
@@ -165,8 +221,9 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
 
   const needsInstall = error && /installier|nicht gefunden/i.test(error);
   return (
-    <div className={`bview${compact ? ' bview--compact' : ''}`}>
+    <div ref={root} className={`bview${compact ? ' bview--compact' : ''}${full ? ' bview--full' : ''}`}>
       <div className="btoolbar">
+        {extra}
         <button className="btn ghost icon small" title="Zurück" onClick={() => nav('back')}><ArrowLeft size={14} /></button>
         {!compact && <button className="btn ghost icon small" title="Vor" onClick={() => nav('forward')}><ArrowRight size={14} /></button>}
         <button className="btn ghost icon small" title="Neu laden" onClick={() => nav('reload')}><RotateCw size={13} /></button>
@@ -177,7 +234,12 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
         </form>
         {!compact && <button className="btn ghost icon small" title="Ansicht an Fenster anpassen" onClick={fit}><Maximize size={13} /></button>}
         <button className={`btn ghost icon small${showStream ? ' active' : ''}`} title="Stream-Qualität" aria-expanded={showStream} onClick={() => setShowStream((v) => !v)}><Gauge size={14} /></button>
+        {audioOk?.available && <>
+          <button className={`btn ghost icon small${av.sound ? ' active' : ''}`} title={av.sound ? 'Ton aus' : 'Ton des Browsers hier abspielen'} aria-pressed={av.sound} onClick={() => av.setSound((v) => !v)}>{av.sound ? <Volume2 size={14} /> : <VolumeX size={14} />}</button>
+          <button className={`btn ghost icon small${av.mic ? ' active' : ''}`} title={av.mic ? 'Mikrofon aus' : 'Mein Mikrofon als Mikrofon des Browsers'} aria-pressed={av.mic} onClick={() => av.setMic((v) => !v)}>{av.mic ? <Mic size={14} /> : <MicOff size={14} />}</button>
+        </>}
         <button className="btn ghost icon small only-touch" title="Tastatur" onClick={() => kbd.current?.focus()}><Keyboard size={14} /></button>
+        <button className="btn ghost icon small" title={full ? 'Vollbild beenden (Esc lange drücken)' : 'Vollbild – wie ein echter Browser'} onClick={toggleFull}>{full ? <Minimize size={13} /> : <Expand size={13} />}</button>
         {!compact && profile.running && <button className="btn ghost icon small" title="Browser beenden" onClick={() => act(() => conn.call('browsers.stop', { id: profileId }))}><Power size={13} /></button>}
       </div>
       {!compact && state.tabs.length > 0 && (
@@ -215,6 +277,48 @@ export function BrowserView({ profileId, compact = false }: { profileId: string;
             <div className="err" style={{ whiteSpace: 'pre-wrap', maxWidth: 520, textAlign: 'center' }}>{error}</div>
             {needsInstall && !status?.bundled && <InstallBox />}
             <button className="btn" onClick={() => { setError(null); conn.call('browsers.view', { id: profileId, on: true }, 60_000).catch((e) => setError(e.message)); }}>Erneut starten</button>
+          </div>
+        )}
+        {av.error && (
+          <div className="bnotice warn" role="status"><span>{av.error}</span><button className="btn ghost icon small" aria-label="Schließen" onClick={av.clearError}><X size={12} /></button></div>
+        )}
+        {notice && !dialog && !fedcm && (
+          <div className={`bnotice ${notice.level}`} role="status">
+            <span>{notice.text}</span>
+            {notice.stalled && <button className="btn small" onClick={() => { setNotice(null); nav('reload'); }}>Tab neu laden</button>}
+            <button className="btn ghost icon small" aria-label="Schließen" onClick={() => setNotice(null)}><X size={12} /></button>
+          </div>
+        )}
+        {fedcm && (
+          <div className="boverlay col">
+            <div className="bdialog">
+              <b>{fedcm.title || 'Anmelden'}</b>
+              {fedcm.subtitle && <p>{fedcm.subtitle}</p>}
+              {fedcm.dialogType === 'AccountChooser' || fedcm.dialogType === 'AutoReauthn' ? (
+                <div className="fedcm-list">
+                  {fedcm.accounts.map((a, i) => (
+                    <button key={a.email + i} className="btn" onClick={() => { setFedcm(null); conn.send('browsers.fedcm', { id: profileId, action: 'select', index: i }); }}>
+                      {a.picture && <img src={a.picture} alt="" width={22} height={22} referrerPolicy="no-referrer" />}
+                      <span>{a.name}<small>{a.email}</small></span>
+                    </button>
+                  ))}
+                </div>
+              ) : <p>Der Browser möchte die Anmeldung beim Anbieter bestätigen.</p>}
+              <div className="perm-actions">
+                {fedcm.dialogType === 'ConfirmIdpLogin' && <button className="btn primary" onClick={() => { setFedcm(null); conn.send('browsers.fedcm', { id: profileId, action: 'confirm' }); }}>Weiter</button>}
+                <button className="btn" onClick={() => { setFedcm(null); conn.send('browsers.fedcm', { id: profileId, action: 'dismiss' }); }}>Schließen</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {chooser && (
+          <div className="boverlay col">
+            <div className="bdialog">
+              <b>Die Seite möchte {chooser.multiple ? 'Dateien' : 'eine Datei'}</b>
+              <p>Wähle sie hier aus – sie wird in den Browser übertragen.</p>
+              <label className="btn primary"><Upload size={13} /> Auswählen<input type="file" hidden multiple={chooser.multiple} onChange={(e) => chooseFiles(e.target.files)} /></label>
+              <div className="perm-actions"><button className="btn" onClick={() => { setChooser(null); conn.send('browsers.files', { id: profileId, files: [] }); }}>Abbrechen</button></div>
+            </div>
           </div>
         )}
         {dialog && (

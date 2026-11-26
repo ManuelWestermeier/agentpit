@@ -182,6 +182,7 @@ export interface Schedule {
 }
 
 export interface Hello {
+  user?: { role: 'admin' | 'browser'; name: string; browsers: string[] | null };
   schedules?: Schedule[];
   installs?: InstallJobs;
   version: string;

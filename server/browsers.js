@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import { chromium } from 'playwright-core';
 import { HOME, ROOT } from './config.js';
-import { findBrowserExecutable, playwrightMcpCli } from './environment.js';
+import { chromiumSearchPaths, findBrowserExecutable, playwrightMcpCli } from './environment.js';
 import { UserError, slugify, stripAnsi, throttle, withTimeout } from './util.js';
+import { Cdp } from './cdp.js';
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ENGINES = ['chromium', 'chrome', 'msedge'];
@@ -315,6 +315,7 @@ export class Browsers extends EventEmitter {
     if (ENGINES.includes(input.engine)) out.engine = input.engine;
     if (typeof input.headless === 'boolean') out.headless = input.headless;
     if (typeof input.temporary === 'boolean') out.temporary = input.temporary;
+    if (typeof input.owner === 'string' && /^[a-z0-9][a-z0-9._-]{1,31}$/.test(input.owner)) out.owner = input.owner; // browser user it was made for
     if (typeof input.proxy === 'string') {
       const proxy = input.proxy.trim();
       if (proxy && !/^(https?|socks5?):\/\/[^\s"]+$/i.test(proxy)) throw new UserError('Proxy im Format http://host:port oder socks5://host:port');
@@ -364,7 +365,7 @@ export class Browsers extends EventEmitter {
       // time zone, color scheme and stream apply live; process-level settings need a restart
       restartNeeded = ['engine', 'headless', 'proxy', 'lang', 'languages'].some((k) => p[k] !== next[k]);
       entry.profile = next;
-      for (const s of entry.identity.values()) this.#applyIdentity(entry, s).catch(() => {});
+      for (const t of entry.pages.values()) if (t.sid) this.#applyIdentity(entry, t.sid).catch(() => {});
       if (JSON.stringify(p.stream) !== JSON.stringify(next.stream)) this.#streamChanged(entry);
     }
     this.emitList();
@@ -388,6 +389,7 @@ export class Browsers extends EventEmitter {
     }
     this.profiles.delete(id);
     await this.#save();
+    this.ctx.audio?.drop(id).catch(() => {});
     for (const pr of await this.ctx.projects.list()) {
       if (pr.browserProfile === id) await this.ctx.projects.update(pr.id, { browserProfile: '' });
     }
@@ -440,7 +442,7 @@ export class Browsers extends EventEmitter {
     const exe = findBrowserExecutable(p.engine);
     if (!exe) {
       throw new UserError(p.engine === 'chromium'
-        ? 'Mitgelieferter Chromium ist nicht installiert – „Browser installieren“ im Browser-Bereich.'
+        ? `Mitgelieferter Chromium ist nicht installiert – „Browser installieren“ im Browser-Bereich.\nGeprüft: ${chromiumSearchPaths().join(' · ')}`
         : `${p.engine === 'chrome' ? 'Google Chrome' : 'Microsoft Edge'} nicht gefunden – im Profil eine andere Engine wählen.`);
     }
     const userDir = this.dir(id);
@@ -486,6 +488,9 @@ export class Browsers extends EventEmitter {
       else headless = true; // no screen and no Xvfb
     }
     if (!headless && process.platform === 'linux') args.push('--ozone-platform-hint=auto'); // native Wayland or X11
+    // own virtual sound card + microphone per identity (Linux with PulseAudio/PipeWire, see server/audio.js)
+    const sound = await this.ctx.audio?.prepare(id, p.name).catch(() => ({})) ?? {};
+    if (Object.keys(sound).length) env = { ...env, ...sound };
     if (headless) {
       args.push('--headless=new');
       const ua = headedUserAgent(exe, p.engine);
@@ -497,7 +502,7 @@ export class Browsers extends EventEmitter {
     if (noSandbox || (process.platform === 'linux' && process.getuid?.() === 0)) args.push('--no-sandbox');
     args.push(p.startUrl || 'about:blank');
 
-    const entry = { id, port, headless, profile: p, uaPatch: null, identity: new Map(), vs: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, browser: null, context: null, active: null, cdp: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
+    const entry = { id, port, headless, profile: p, uaPatch: null, vs: new Map(), level: AUTO_START_LEVEL, net: { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 }, proc: null, cdp: null, pages: new Map(), active: null, cast: null, viewers: new Set(), lastFrame: null, state: { url: '', title: '', tabs: [] }, ready: false, dialog: null, log: [] };
     this.running.set(id, entry);
     entry.starting = (async () => {
       let proc = null;
@@ -522,21 +527,18 @@ export class Browsers extends EventEmitter {
         proc.on('exit', () => this.#onExit(id, entry));
       }
       try {
-        await waitForCdp(port, proc);
-        entry.browser = await withTimeout(chromium.connectOverCDP(`http://127.0.0.1:${port}`), 20_000, 'CDP-Verbindung');
-        entry.browser.on('disconnected', () => this.#onExit(id, entry)); // closed by the user, crashed, adopted one ended
-        entry.context = entry.browser.contexts()[0];
-        if (adopt) entry.headless = headless = /Headless/i.test(await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.product).catch(() => ''));
-        await this.#markProfile(entry.browser, id);
+        const v = await waitForCdp(port, proc);
+        entry.cdp = await Cdp.connect(v.webSocketDebuggerUrl);
+        entry.cdp.on('disconnected', () => this.#onExit(id, entry)); // closed by the user, crashed, adopted one ended
+        const ver = await entry.cdp.send('Browser.getVersion');
+        if (adopt) entry.headless = headless = /Headless/i.test(ver.product);
+        await this.#markProfile(entry, id);
         if (headless) {
-          const ua = headedUserAgent(exe, p.engine) ?? (await entry.browser.newBrowserCDPSession().then((s) => s.send('Browser.getVersion')).then((v) => v.userAgent.replace('HeadlessChrome', 'Chrome')).catch(() => null));
-          if (ua) entry.uaPatch = { userAgent: ua, platform: navigatorPlatform(), userAgentMetadata: headedUaMetadata(entry.browser.version(), p.engine) };
+          const ua = headedUserAgent(exe, p.engine) ?? ver.userAgent.replace('HeadlessChrome', 'Chrome');
+          entry.uaPatch = { userAgent: ua, platform: navigatorPlatform(), userAgentMetadata: headedUaMetadata(ver.product.split('/')[1] ?? '0', p.engine) };
         }
         entry.statsTimer = setInterval(() => this.#tickStream(entry), 1500);
-        entry.context.on('page', (page) => { this.#watchPage(entry, page); this.#activate(entry, page).catch(() => {}); });
-        for (const page of entry.context.pages()) this.#watchPage(entry, page);
-        const first = entry.context.pages().at(-1) ?? await entry.context.newPage();
-        await this.#activate(entry, first);
+        await this.#watchTargets(entry);
         entry.ready = true;
       } catch (e) {
         try { proc?.kill(); } catch { /* gone */ }
@@ -612,11 +614,9 @@ export class Browsers extends EventEmitter {
   }
 
   /** Persistent marker cookie: lets a later cockpit process recognise this identity's browser. */
-  async #markProfile(browser, id) {
+  async #markProfile(entry, id) {
     try {
-      const s = await browser.newBrowserCDPSession();
-      await s.send('Storage.setCookies', { cookies: [{ name: MARKER_COOKIE, value: id, domain: MARKER_DOMAIN, path: '/', expires: Math.floor(Date.now() / 1000) + 10 * 365 * 86400 }] });
-      await s.detach();
+      await entry.cdp.send('Storage.setCookies', { cookies: [{ name: MARKER_COOKIE, value: id, domain: MARKER_DOMAIN, path: '/', expires: Math.floor(Date.now() / 1000) + 10 * 365 * 86400 }] });
     } catch { /* marker is a safety net only */ }
   }
 
@@ -624,7 +624,10 @@ export class Browsers extends EventEmitter {
     clearInterval(entry.statsTimer);
     clearTimeout(entry.flushTimer);
     clearTimeout(entry.trailTimer);
+    clearTimeout(entry.stateTimer);
+    clearInterval(entry.windowTimer);
     if (this.running.get(id) !== entry) return;
+    entry.cdp?.close();
     this.running.delete(id);
     for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bstate', profileId: id, stopped: true });
     const p = this.profiles.get(id);
@@ -641,8 +644,7 @@ export class Browsers extends EventEmitter {
     if (!entry) return;
     const exited = entry.proc && entry.proc.exitCode === null ? new Promise((r) => entry.proc.once('exit', r)) : null;
     try {
-      const s = await entry.browser?.newBrowserCDPSession();
-      await withTimeout(s.send('Browser.close'), 4000, 'Browser.close'); // clean exit flushes cookies
+      await entry.cdp?.send('Browser.close', {}, null, 4000); // clean exit flushes cookies
     } catch { /* fall back to kill */ }
     // wait until the process is really gone (it releases the profile lock last), kill if it hangs
     if (exited) {
@@ -659,60 +661,125 @@ export class Browsers extends EventEmitter {
     try { this.xvfb?.proc.kill(); } catch { /* gone */ }
   }
 
-  // ------------------------------------------------------------------ pages, screencast
+  // ------------------------------------------------------------------ tabs (raw CDP, no Runtime domain)
 
-  #watchPage(entry, page) {
-    if (page.__cockpitWatched) return;
-    page.__cockpitWatched = true;
-    // Emulation overrides live as long as their session stays attached → one session per page lifetime
-    entry.context.newCDPSession(page).then((s) => {
-      if (page.isClosed()) return;
-      entry.identity.set(page, s);
-      return this.#applyIdentity(entry, s);
-    }).catch(() => {});
-    const update = () => this.#pushState(entry);
-    page.on('framenavigated', (f) => { if (f === page.mainFrame()) update(); });
-    page.on('load', update);
-    page.on('close', () => {
-      entry.identity.delete(page);
-      if (entry.active === page) {
-        const next = entry.context?.pages().filter((p) => !p.isClosed()).at(-1);
-        if (next) this.#activate(entry, next).catch(() => {});
-        else { entry.active = null; update(); }
-      } else update();
+  /**
+   * Follows the browser's tabs through Target events. Each tab gets one "identity" session for the
+   * whole tab lifetime (language/time-zone overrides live as long as it stays attached; dialogs,
+   * FedCM and navigation go through it). Nothing here enables Runtime – see server/cdp.js.
+   */
+  async #watchTargets(entry) {
+    const { cdp } = entry;
+    const isTab = (t) => t.type === 'page' && !/^(devtools|chrome-extension):/.test(t.url);
+    cdp.on('Target.targetCreated', ({ targetInfo: t }) => {
+      if (!isTab(t) || entry.pages.has(t.targetId)) return;
+      this.#addTab(entry, t);
+      if (entry.ready) this.#activate(entry, t.targetId).catch(() => {}); // new tab / popup → show it
     });
-    page.on('dialog', (d) => {
-      entry.dialog = d;
-      for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bdialog', profileId: entry.id, type: d.type(), message: d.message(), defaultValue: d.defaultValue() });
+    cdp.on('Target.targetInfoChanged', ({ targetInfo: t }) => {
+      const tab = entry.pages.get(t.targetId);
+      if (!tab) return;
+      const changed = tab.url !== t.url || tab.title !== t.title;
+      tab.url = t.url; tab.title = t.title;
+      if (changed) this.#pushStateSoon(entry);
     });
+    cdp.on('Target.targetDestroyed', ({ targetId }) => this.#dropTab(entry, targetId));
+    cdp.on('Target.targetCrashed', ({ targetId }) => {
+      if (targetId === entry.active) this.#toViewers(entry, { t: 'bnotice', profileId: entry.id, level: 'error', text: 'Der Tab ist abgestürzt – neu laden.' });
+    });
+    cdp.on('Page.screencastFrame', (f, sid) => this.#onFrame(entry, f, sid));
+    cdp.on('Page.javascriptDialogOpening', (d, sid) => {
+      entry.dialog = { sid, type: d.type, message: d.message, defaultValue: d.defaultPrompt ?? '' };
+      this.#toViewers(entry, { t: 'bdialog', profileId: entry.id, type: d.type, message: d.message, defaultValue: d.defaultPrompt ?? '' });
+    });
+    cdp.on('Page.javascriptDialogClosed', (_d, sid) => {
+      if (entry.dialog?.sid === sid) { entry.dialog = null; this.#toViewers(entry, { t: 'bdialog', profileId: entry.id, closed: true }); }
+    });
+    // "Sign in with Google" & co. (FedCM) is browser UI, not part of the page picture – hand it to the viewer
+    cdp.on('FedCm.dialogShown', (d, sid) => {
+      entry.fedcm = { sid, dialogId: d.dialogId };
+      this.#toViewers(entry, { t: 'bfedcm', profileId: entry.id, dialogType: d.dialogType, title: d.title, subtitle: d.subtitle ?? '', accounts: (d.accounts ?? []).map((a) => ({ email: a.email, name: a.name, picture: a.pictureUrl, idp: a.idpConfigUrl })) });
+    });
+    cdp.on('FedCm.dialogClosed', () => { entry.fedcm = null; this.#toViewers(entry, { t: 'bfedcm', profileId: entry.id, closed: true }); });
+    // a file input in a remote browser would open an OS dialog nobody can see – the viewer picks files instead
+    cdp.on('Page.fileChooserOpened', (c, sid) => {
+      if (sid !== entry.cast?.sid) return;
+      entry.chooser = { sid, backendNodeId: c.backendNodeId, mode: c.mode };
+      this.#toViewers(entry, { t: 'bfile', profileId: entry.id, multiple: c.mode === 'selectMultiple' });
+    });
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    for (const t of targetInfos.filter(isTab)) this.#addTab(entry, t);
+    await cdp.send('Target.setDiscoverTargets', { discover: true });
+    let first = [...entry.pages.keys()].at(-1);
+    if (!first) first = (await cdp.send('Target.createTarget', { url: 'about:blank' })).targetId;
+    await this.#activate(entry, first);
   }
 
-  /** Language, time zone, color scheme (and for headless: headed client hints) of one page. */
-  async #applyIdentity(entry, s) {
+  #addTab(entry, t) {
+    const tab = { id: t.targetId, url: t.url, title: t.title, sid: null };
+    entry.pages.set(t.targetId, tab);
+    tab.ready = (async () => {
+      const sid = await entry.cdp.attach(t.targetId);
+      if (!entry.pages.has(t.targetId)) { entry.cdp.detach(sid); return null; }
+      tab.sid = sid;
+      await Promise.all([
+        entry.cdp.send('Page.enable', {}, sid),
+        entry.cdp.send('FedCm.enable', { disableRejectionDelay: false }, sid).catch(() => {}), // older browsers
+        this.#applyIdentity(entry, sid),
+      ]);
+      return sid;
+    })().catch(() => null);
+    this.#pushStateSoon(entry);
+    return tab;
+  }
+
+  #dropTab(entry, targetId) {
+    if (!entry.pages.delete(targetId)) return;
+    if (entry.active === targetId) {
+      entry.active = null;
+      const next = [...entry.pages.keys()].at(-1);
+      if (next) this.#activate(entry, next).catch(() => {});
+      else this.#pushState(entry);
+    } else this.#pushStateSoon(entry);
+  }
+
+  /** Language, time zone, color scheme (and for headless: headed client hints) of one tab. */
+  async #applyIdentity(entry, sid) {
     const p = entry.profile;
     const langs = acceptLanguages(p);
+    const send = (m, params) => entry.cdp.send(m, params, sid);
     const jobs = [];
-    if (entry.uaPatch) jobs.push(s.send('Emulation.setUserAgentOverride', { ...entry.uaPatch, ...(langs ? { acceptLanguage: langs } : {}) }));
-    if (p.lang) jobs.push(s.send('Emulation.setLocaleOverride', { locale: p.lang.replace('-', '_') }).catch(() => {})); // fails if already set by another session
-    jobs.push(s.send('Emulation.setTimezoneOverride', { timezoneId: p.timezone || '' }).catch(() => {})); // '' = system zone
-    jobs.push(s.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: p.colorScheme === 'auto' ? '' : p.colorScheme }] }));
+    if (entry.uaPatch) jobs.push(send('Emulation.setUserAgentOverride', { ...entry.uaPatch, ...(langs ? { acceptLanguage: langs } : {}) }));
+    if (p.lang) jobs.push(send('Emulation.setLocaleOverride', { locale: p.lang.replace('-', '_') }).catch(() => {})); // fails if already set by another session
+    jobs.push(send('Emulation.setTimezoneOverride', { timezoneId: p.timezone || '' }).catch(() => {})); // '' = system zone
+    jobs.push(send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: p.colorScheme === 'auto' ? '' : p.colorScheme }] }).catch(() => {}));
     await Promise.all(jobs);
   }
 
-  async #activate(entry, page) {
-    if (!page || page.isClosed()) return;
-    entry.active = page;
+  /** Show this tab: real tab switch in the window (visibility and focus stay consistent for the site). */
+  async #activate(entry, targetId) {
+    if (!targetId || !entry.pages.has(targetId)) return;
+    entry.active = targetId;
     entry.lastFrame = null;
+    entry.cdp.send('Target.activateTarget', { targetId }).catch(() => {});
     await this.#restartScreencast(entry);
     this.#pushState(entry);
   }
 
-  async #pushState(entry) {
-    const pages = entry.context?.pages().filter((p) => !p.isClosed()) ?? [];
-    const tabs = await Promise.all(pages.map(async (p, i) => ({ i, url: p.url(), title: await p.title().catch(() => ''), active: p === entry.active })));
+  #toViewers(entry, msg) {
+    for (const c of entry.viewers) this.ctx.hub.send(c, msg);
+  }
+
+  #pushStateSoon(entry) {
+    if (entry.stateTimer) return;
+    entry.stateTimer = setTimeout(() => { entry.stateTimer = null; this.#pushState(entry); }, 120);
+  }
+
+  #pushState(entry) {
+    const tabs = [...entry.pages.values()].map((t, i) => ({ i, url: t.url, title: t.title, active: t.id === entry.active }));
     const act = tabs.find((t) => t.active);
-    entry.state = { url: act?.url ?? '', title: act?.title ?? '', tabs };
-    for (const c of entry.viewers) this.ctx.hub.send(c, { t: 'bstate', profileId: entry.id, ...entry.state });
+    entry.state = { url: act?.url ?? '', title: act?.title ?? '', tabs, fullscreen: !!entry.fullscreen };
+    this.#toViewers(entry, { t: 'bstate', profileId: entry.id, ...entry.state });
     this.emitList();
   }
 
@@ -720,40 +787,68 @@ export class Browsers extends EventEmitter {
     try {
       await this.#startScreencast(entry);
     } catch (e) {
-      // A page that just opened may not accept CDP commands yet – retry briefly
-      if (attempt < 4 && entry.active && !entry.active.isClosed()) {
+      // a tab that just opened may not accept commands yet – retry briefly
+      if (attempt < 4 && entry.active && entry.pages.has(entry.active) && this.running.get(entry.id) === entry) {
         await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
         if (this.running.get(entry.id) === entry) return this.#restartScreencast(entry, attempt + 1);
       } else console.warn(`[browser] Screencast: ${e.message.split('\n')[0]}`);
     }
   }
 
+  /**
+   * Own session per screencast (restarting on the same session leaves Chrome waiting for acks of
+   * dropped frames). It also carries what only matters while someone watches remotely: focus emulation
+   * (the window on the server is rarely the focused one – sites would see a blurred page) and the
+   * file-chooser hand-over.
+   */
   async #startScreencast(entry) {
-    const old = entry.cdp;
-    entry.cdp = null;
-    if (old) { try { await old.send('Page.stopScreencast'); await old.detach(); } catch { /* page gone */ } }
-    if (!entry.viewers.size || !entry.active || entry.active.isClosed()) return;
-    const page = entry.active;
-    const cdp = await entry.context.newCDPSession(page);
-    entry.cdp = cdp;
+    const old = entry.cast;
+    entry.cast = null;
+    if (old?.sid) { entry.cdp.send('Page.stopScreencast', {}, old.sid, 3000).catch(() => {}); entry.cdp.detach(old.sid); }
+    clearInterval(entry.windowTimer);
+    if (!entry.viewers.size || !entry.active || !entry.pages.has(entry.active)) return;
+    const targetId = entry.active;
+    const sid = await entry.cdp.attach(targetId);
+    const cast = { sid, targetId };
+    entry.cast = cast;
     entry.frameAt = 0;
     entry.sentAt = 0;
-    cdp.on('Page.screencastFrame', (f) => {
-      // fps limit, part 1: delaying the ack slows Chrome down (saves CPU). Capped at one frame gap –
-      // Chrome keeps a few frames in flight, so uncapped delays would add up and stall the stream.
-      const now = Date.now();
-      const gap = 1000 / this.#streamParams(entry).fps;
-      const wait = Math.min(gap, Math.max(0, entry.frameAt + gap - now));
-      entry.frameAt = now + wait;
-      setTimeout(() => cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}), wait);
-      if (entry.cdp !== cdp) return;
-      entry.lastFrame = { t: 'bframe', profileId: entry.id, data: f.data, fmt: entry.streamFormat, w: f.metadata.deviceWidth, h: f.metadata.deviceHeight };
-      // part 2: forward at most one frame per gap; a trailing send makes sure the final picture arrives
-      const due = entry.sentAt + gap * 0.9 - now;
-      if (due <= 0) this.#forwardFrame(entry);
-      else if (!entry.trailTimer) entry.trailTimer = setTimeout(() => { entry.trailTimer = null; if (entry.cdp === cdp) this.#forwardFrame(entry); }, due);
-    });
-    await this.#screencastOn(entry, cdp);
+    const send = (m, params) => entry.cdp.send(m, params, sid);
+    await send('Page.enable');
+    await Promise.all([
+      send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {}),
+      send('Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => {}),
+    ]);
+    if (entry.cast !== cast) return;
+    await this.#screencastOn(entry, sid);
+    // website fullscreen (video, game, slides) → the viewer follows
+    entry.windowTimer = setInterval(() => this.#checkWindow(entry, cast), 1000);
+  }
+
+  async #checkWindow(entry, cast) {
+    if (entry.cast !== cast || entry.headless) return;
+    try {
+      const { bounds } = await entry.cdp.send('Browser.getWindowForTarget', { targetId: cast.targetId }, null, 2000);
+      const fs = bounds.windowState === 'fullscreen';
+      if (fs !== !!entry.fullscreen) { entry.fullscreen = fs; this.#pushState(entry); }
+    } catch { /* tab closing */ }
+  }
+
+  #onFrame(entry, f, sid) {
+    const cast = entry.cast;
+    // fps limit, part 1: delaying the ack slows Chrome down (saves CPU). Capped at one frame gap –
+    // Chrome keeps a few frames in flight, so uncapped delays would add up and stall the stream.
+    const now = Date.now();
+    const gap = 1000 / this.#streamParams(entry).fps;
+    const wait = Math.min(gap, Math.max(0, entry.frameAt + gap - now));
+    entry.frameAt = now + wait;
+    setTimeout(() => entry.cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }, sid, 5000).catch(() => {}), wait);
+    if (!cast || cast.sid !== sid) return;
+    entry.lastFrame = { t: 'bframe', profileId: entry.id, data: f.data, fmt: entry.streamFormat, w: f.metadata.deviceWidth, h: f.metadata.deviceHeight };
+    // part 2: forward at most one frame per gap; a trailing send makes sure the final picture arrives
+    const due = entry.sentAt + gap * 0.9 - now;
+    if (due <= 0) this.#forwardFrame(entry);
+    else if (!entry.trailTimer) entry.trailTimer = setTimeout(() => { entry.trailTimer = null; if (entry.cast === cast) this.#forwardFrame(entry); }, due);
   }
 
   #forwardFrame(entry) {
@@ -803,16 +898,16 @@ export class Browsers extends EventEmitter {
     return { ...STREAM_LEVELS[entry.level], format: 'jpeg' };
   }
 
-  async #screencastOn(entry, cdp) {
+  async #screencastOn(entry, sid) {
     const s = this.#streamParams(entry);
     entry.streamFormat = s.format;
-    await cdp.send('Page.startScreencast', { format: s.format, ...(s.format === 'jpeg' ? { quality: s.quality } : {}), maxWidth: s.maxWidth, maxHeight: s.maxWidth, everyNthFrame: 1 });
+    await entry.cdp.send('Page.startScreencast', { format: s.format, ...(s.format === 'jpeg' ? { quality: s.quality } : {}), maxWidth: s.maxWidth, maxHeight: s.maxWidth, everyNthFrame: 1 }, sid);
   }
 
   /** Apply new stream settings to a running screencast without reconnecting. */
   async #streamChanged(entry) {
     entry.net = { sent: 0, skipped: 0, bytes: 0, good: 0, frames: 0 };
-    if (!entry.cdp) return;
+    if (!entry.cast) return;
     // fresh session: restarting the screencast on the same session leaves Chrome waiting for acks of dropped frames
     await this.#restartScreencast(entry);
     this.#sendStats(entry, 0);
@@ -945,20 +1040,60 @@ export class Browsers extends EventEmitter {
     return e;
   }
 
-  async input(id, ev) {
-    const e = this.#entry(id);
-    try {
-      await this.#dispatchInput(e, e.cdp ?? await e.context.newCDPSession(e.active), ev);
-    } catch (err) {
-      if (!/closed|detached|No target/i.test(err.message)) throw err;
-      // The viewed tab just closed (by the page, by Claude or another tool) – the event is meaningless
-      // now; show the remaining tab instead of failing every further mouse move.
-      const next = e.context?.pages().filter((p) => !p.isClosed()).at(-1);
-      if (next && (next !== e.active || e.active.isClosed())) await this.#activate(e, next).catch(() => {});
-    }
+  /** Session of the shown tab (waits for its attach right after a tab switch). */
+  async #tabSession(e) {
+    const tab = e.pages.get(e.active);
+    const sid = tab?.sid ?? await tab?.ready;
+    if (!sid) throw new UserError('Tab ist nicht bereit');
+    return sid;
   }
 
-  async #dispatchInput(e, cdp, ev) {
+  /**
+   * Input goes in order, but a tab that stops answering must never freeze the remote control:
+   * every command has a timeout, mouse moves pile up into the newest one, and after a stall the
+   * viewer learns why (page dialog, browser sign-in dialog, busy page) and how to get out.
+   */
+  async input(id, ev) {
+    const e = this.#entry(id);
+    const sid = await this.#tabSession(e);
+    const move = ev?.kind === 'mouse' && ev.type === 'move';
+    if (move && e.moveInFlight) { e.pendingMove = { sid, ev }; return; }
+    if (!move && e.pendingMove) { const m = e.pendingMove; e.pendingMove = null; this.#sendInput(e, m.sid, m.ev); } // keep the order
+    this.#sendInput(e, sid, ev);
+  }
+
+  /** Writes the command at once (keeps order), handles the answer later. */
+  #sendInput(e, sid, ev) {
+    const move = ev?.kind === 'mouse' && ev.type === 'move';
+    if (move) e.moveInFlight = true;
+    this.#dispatchInput(e, sid, ev).then(() => {
+      if (e.stalled) { e.stalled = false; this.#toViewers(e, { t: 'bnotice', profileId: e.id, clear: true }); }
+    }, (err) => {
+      if (err.timeout) return this.#stalled(e);
+      if (!/closed|detached|No target|not found|No session/i.test(err.message)) return;
+      // the shown tab just closed – show the remaining one instead of failing every further move
+      const next = [...e.pages.keys()].at(-1);
+      if (next && next !== e.active) this.#activate(e, next).catch(() => {});
+    }).finally(() => {
+      if (!move) return;
+      e.moveInFlight = false;
+      const m = e.pendingMove;
+      if (m) { e.pendingMove = null; this.#sendInput(e, m.sid, m.ev); }
+    });
+  }
+
+  #stalled(e) {
+    if (e.stalled) return;
+    e.stalled = true;
+    const why = e.dialog ? 'Die Seite zeigt einen Dialog – bitte beantworten.'
+      : e.fedcm ? 'Der Browser zeigt einen Anmeldedialog – bitte auswählen oder schließen.'
+        : e.chooser ? 'Die Seite wartet auf eine Datei.'
+          : 'Die Seite reagiert gerade nicht auf Eingaben.';
+    this.#toViewers(e, { t: 'bnotice', profileId: e.id, level: 'warn', text: why, stalled: true });
+  }
+
+  async #dispatchInput(e, sid, ev) {
+    const send = (m, params) => e.cdp.send(m, params, sid, 4000);
     const modifiers = (ev.alt ? MOD.alt : 0) | (ev.ctrl ? MOD.ctrl : 0) | (ev.meta ? MOD.meta : 0) | (ev.shift ? MOD.shift : 0);
     const x = num(ev.x, 0, 10_000), y = num(ev.y, 0, 10_000);
     switch (ev.kind) {
@@ -966,22 +1101,34 @@ export class Browsers extends EventEmitter {
         const type = { move: 'mouseMoved', down: 'mousePressed', up: 'mouseReleased' }[ev.type];
         if (!type) return;
         const button = ['left', 'right', 'middle'].includes(ev.button) ? ev.button : 'none';
-        await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' && !ev.buttons ? 'none' : button, buttons: num(ev.buttons, 0, 7), clickCount: num(ev.clickCount, 0, 3), modifiers });
+        await send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' && !ev.buttons ? 'none' : button, buttons: num(ev.buttons, 0, 7), clickCount: num(ev.clickCount, 0, 3), modifiers, pointerType: 'mouse' });
         return;
       }
       case 'wheel':
-        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: num(ev.dx, -5000, 5000), deltaY: num(ev.dy, -5000, 5000), modifiers });
+        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: num(ev.dx, -5000, 5000), deltaY: num(ev.dy, -5000, 5000), modifiers, pointerType: 'mouse' });
         return;
+      case 'touch': {
+        // phones: real touch events (pinch, swipe carousels) – sites built for touch get what they expect
+        const type = { start: 'touchStart', move: 'touchMove', end: 'touchEnd', cancel: 'touchCancel' }[ev.type];
+        if (!type) return;
+        const points = (Array.isArray(ev.points) ? ev.points : []).slice(0, 5).map((p, i) => ({ x: num(p.x, 0, 10_000), y: num(p.y, 0, 10_000), id: num(p.id, 0, 1000, i), radiusX: 6, radiusY: 6, force: 1 }));
+        await send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : points, modifiers });
+        return;
+      }
       case 'key': {
         const key = String(ev.key ?? '').slice(0, 32);
         const text = typeof ev.text === 'string' && ev.text.length <= 4 ? ev.text : undefined;
-        const base = { key, code: String(ev.code ?? '').slice(0, 32), windowsVirtualKeyCode: num(ev.keyCode, 0, 255), nativeVirtualKeyCode: num(ev.keyCode, 0, 255), modifiers, location: num(ev.location, 0, 3) };
-        if (ev.type === 'down') await cdp.send('Input.dispatchKeyEvent', { ...base, type: text && !(modifiers & (MOD.ctrl | MOD.meta)) ? 'keyDown' : 'rawKeyDown', text: modifiers & (MOD.ctrl | MOD.meta) ? undefined : text, unmodifiedText: text });
-        else await cdp.send('Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
+        const base = { key, code: String(ev.code ?? '').slice(0, 32), windowsVirtualKeyCode: num(ev.keyCode, 0, 255), nativeVirtualKeyCode: num(ev.keyCode, 0, 255), modifiers, location: num(ev.location, 0, 3), autoRepeat: !!ev.repeat };
+        if (ev.type === 'down') await send('Input.dispatchKeyEvent', { ...base, type: text && !(modifiers & (MOD.ctrl | MOD.meta)) ? 'keyDown' : 'rawKeyDown', text: modifiers & (MOD.ctrl | MOD.meta) ? undefined : text, unmodifiedText: text });
+        else await send('Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
         return;
       }
       case 'text':
-        if (typeof ev.text === 'string' && ev.text.length <= 100_000) await cdp.send('Input.insertText', { text: ev.text });
+        if (typeof ev.text === 'string' && ev.text.length <= 100_000) await send('Input.insertText', { text: ev.text });
+        return;
+      case 'ime':
+        // composition (phone keyboards with suggestions, CJK input): shown underlined until committed
+        if (typeof ev.text === 'string' && ev.text.length <= 1000) await send('Input.imeSetComposition', { text: ev.text, selectionStart: ev.text.length, selectionEnd: ev.text.length });
         return;
       default:
     }
@@ -989,44 +1136,57 @@ export class Browsers extends EventEmitter {
 
   async navigate(id, { action, url }) {
     const e = this.#entry(id);
-    const page = e.active;
-    const opts = { waitUntil: 'commit', timeout: 30_000 };
-    if (action === 'back') await page.goBack(opts).catch(() => {});
-    else if (action === 'forward') await page.goForward(opts).catch(() => {});
-    else if (action === 'reload') await page.reload(opts).catch(() => {});
-    else if (action === 'go') {
+    const sid = await this.#tabSession(e);
+    const send = (m, params) => e.cdp.send(m, params, sid, 30_000);
+    if (action === 'back' || action === 'forward') {
+      const h = await send('Page.getNavigationHistory');
+      const target = h.entries[h.currentIndex + (action === 'back' ? -1 : 1)];
+      if (target) await send('Page.navigateToHistoryEntry', { entryId: target.id }).catch(() => {});
+    } else if (action === 'reload') {
+      await send('Page.reload', {}).catch(() => {});
+    } else if (action === 'go') {
       let target = String(url ?? '').trim();
       if (!target) return;
       if (!/^[a-z][a-z0-9+.-]*:/i.test(target)) target = /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$|^localhost(:\d+)?/.test(target) ? `https://${target}`.replace(/^https:\/\/localhost/, 'http://localhost') : `https://www.google.com/search?q=${encodeURIComponent(target)}`;
-      await page.goto(target, opts).catch((err) => { throw new UserError(`Navigation fehlgeschlagen: ${err.message.split('\n')[0]}`); });
+      // like typing into the address bar: a "typed" navigation, no referrer
+      const r = await send('Page.navigate', { url: target, transitionType: 'typed' });
+      if (r.errorText && r.errorText !== 'net::ERR_ABORTED') throw new UserError(`Navigation fehlgeschlagen: ${r.errorText}`);
+    } else if (action === 'exitFullscreen') {
+      await this.#exitFullscreen(e, sid);
     }
-    this.#pushState(e);
+    this.#pushStateSoon(e);
+  }
+
+  /** Website fullscreen off – evaluated in an isolated world, invisible to the page's own scripts. */
+  async #exitFullscreen(e, sid) {
+    const { frameTree } = await e.cdp.send('Page.getFrameTree', {}, sid);
+    const { executionContextId } = await e.cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: '__cockpit', grantUniveralAccess: false }, sid);
+    await e.cdp.send('Runtime.evaluate', { expression: 'document.fullscreenElement && document.exitFullscreen()', contextId: executionContextId, awaitPromise: true, userGesture: true }, sid).catch(() => {});
   }
 
   async tab(id, { op, index, url }) {
     const e = this.#entry(id);
-    const pages = e.context.pages().filter((p) => !p.isClosed());
+    const ids = [...e.pages.keys()];
     if (op === 'new') {
-      const page = await e.context.newPage();
-      if (url) await page.goto(String(url), { waitUntil: 'commit' }).catch(() => {});
-    } else if (op === 'select' && pages[index]) {
-      await pages[index].bringToFront().catch(() => {});
-      await this.#activate(e, pages[index]);
-    } else if (op === 'close' && pages[index]) {
-      if (pages.length === 1) await e.context.newPage();
-      await pages[index].close().catch(() => {});
+      const { targetId } = await e.cdp.send('Target.createTarget', { url: /^https?:\/\//.test(String(url ?? '')) ? String(url) : 'about:blank' });
+      if (!e.pages.has(targetId)) this.#addTab(e, { targetId, url: 'about:blank', title: '' });
+      await this.#activate(e, targetId);
+    } else if (op === 'select' && ids[index]) {
+      await this.#activate(e, ids[index]);
+    } else if (op === 'close' && ids[index]) {
+      if (ids.length === 1) await e.cdp.send('Target.createTarget', { url: 'about:blank' });
+      await e.cdp.send('Target.closeTarget', { targetId: ids[index] }).catch(() => {});
     }
   }
 
   async resize(id, width, height) {
     const e = this.#entry(id);
-    const cdp = await e.context.newCDPSession(e.active);
-    try {
-      const { windowId } = await cdp.send('Browser.getWindowForTarget');
-      // window size = viewport + browser chrome; headless has none
-      const chromeH = e.headless ? 0 : 88;
-      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { width: num(width, 320, 3840, 1366), height: num(height, 240, 2400, 860) + chromeH, windowState: 'normal' } });
-    } finally { await cdp.detach().catch(() => {}); }
+    const { windowId, bounds } = await e.cdp.send('Browser.getWindowForTarget', { targetId: e.active });
+    if (bounds.windowState === 'fullscreen') return; // the site decides the size now
+    // window size = viewport + browser chrome; headless has none
+    const chromeH = e.headless ? 0 : 88;
+    if (bounds.windowState !== 'normal') await e.cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+    await e.cdp.send('Browser.setWindowBounds', { windowId, bounds: { width: num(width, 320, 3840, 1366), height: num(height, 240, 2400, 860) + chromeH } });
   }
 
   async answerDialog(id, accept, text) {
@@ -1034,7 +1194,45 @@ export class Browsers extends EventEmitter {
     const d = e.dialog;
     e.dialog = null;
     if (!d) return;
-    await (accept ? d.accept(typeof text === 'string' ? text : undefined) : d.dismiss()).catch(() => {});
+    await e.cdp.send('Page.handleJavaScriptDialog', { accept: !!accept, ...(typeof text === 'string' ? { promptText: text } : {}) }, d.sid).catch(() => {});
+  }
+
+  /** Answer the browser's own sign-in dialog (FedCM): pick an account, press its button, or close it. */
+  async answerFedCm(id, { action, index }) {
+    const e = this.#entry(id);
+    const f = e.fedcm;
+    if (!f) return;
+    e.fedcm = null;
+    const send = (m, params) => e.cdp.send(m, { dialogId: f.dialogId, ...params }, f.sid).catch(() => {});
+    if (action === 'select') await send('FedCm.selectAccount', { accountIndex: num(index, 0, 50, 0) });
+    else if (action === 'confirm') await send('FedCm.clickDialogButton', { dialogButton: 'ConfirmIdpLoginContinue' });
+    else await send('FedCm.dismissDialog', { triggerCooldown: false });
+  }
+
+  /** Files for the open file chooser (uploaded by the viewer first, see uploadPath); [] = cancel. */
+  async chooseFiles(id, files) {
+    const e = this.#entry(id);
+    const c = e.chooser;
+    e.chooser = null;
+    if (!c) throw new UserError('Kein Dateidialog offen');
+    const dir = this.ctx.store.p('browser-uploads', id);
+    const paths = (Array.isArray(files) ? files : []).slice(0, c.mode === 'selectMultiple' ? 50 : 1)
+      .map((f) => path.join(dir, path.basename(String(f)))).filter((f) => f.startsWith(dir + path.sep) && fs.existsSync(f));
+    await e.cdp.send('DOM.setFileInputFiles', { files: paths, backendNodeId: c.backendNodeId }, c.sid);
+  }
+
+  /** Where the viewer's upload for the file chooser goes (old uploads of this identity are removed after a day). */
+  async uploadPath(id, name) {
+    this.get(id);
+    const dir = this.ctx.store.p('browser-uploads', id);
+    await fsp.mkdir(dir, { recursive: true });
+    for (const f of await fsp.readdir(dir).catch(() => [])) {
+      const st = await fsp.stat(path.join(dir, f)).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > 86_400_000) await fsp.rm(path.join(dir, f), { force: true }).catch(() => {});
+    }
+    const clean = String(name ?? 'datei').replace(/[^\p{L}\p{N} ._()-]/gu, '_').replace(/^\.+/, '').slice(0, 120) || 'datei';
+    const file = `${Date.now().toString(36)}-${clean}`;
+    return { file, abs: path.join(dir, file) };
   }
 
   // ------------------------------------------------------------------ installation
@@ -1053,8 +1251,20 @@ export class Browsers extends EventEmitter {
     proc.stdout.on('data', push);
     proc.stderr.on('data', push);
     proc.on('close', (code) => {
-      this.install.state = code === 0 ? 'done' : 'error';
-      push(code === 0 ? 'Fertig.' : `Abgebrochen (Code ${code}).`);
+      if (code !== 0) {
+        this.install.state = 'error';
+        push(`Abgebrochen (Code ${code}).`);
+      } else if (!findBrowserExecutable('chromium')) {
+        // installer succeeded but the executable is somewhere we do not look – say where it went
+        this.install.state = 'error';
+        const base = process.env.PLAYWRIGHT_BROWSERS_PATH;
+        let found = [];
+        try { found = fs.readdirSync(base).flatMap((d) => (/^chromium-/.test(d) ? fs.readdirSync(path.join(base, d)).map((s) => `${d}/${s}`) : [d])); } catch { /* empty */ }
+        push(`Installiert, aber keine ausführbare chrome-Datei gefunden. Inhalt von ${base}: ${found.join(', ') || '(leer)'}`);
+      } else {
+        this.install.state = 'done';
+        push('Fertig.');
+      }
       this.emitList();
     });
     this.ctx.hub.toAll({ t: 'binstall', install: this.install });

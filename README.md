@@ -78,7 +78,15 @@ On first start you choose a password in the browser. Data, projects and settings
 
 ## Remote access
 
-The server only listens on `127.0.0.1`. Put a tunnel in front of it on the same machine:
+The server only listens on `127.0.0.1`. The quickest way out is the built-in Cloudflare Tunnel – no open port, no router setup, HTTPS:
+
+```bash
+npx agentpit --tunnel               # prints https://….trycloudflare.com (changes on every start)
+```
+
+or **Account → Remote access via Cloudflare** in the UI (downloads `cloudflared` on first use). For a fixed address on your own domain put `CLOUDFLARE_TUNNEL_TOKEN=…` (Cloudflare Zero Trust → Networks → Tunnels) and `TUNNEL=on` into `~/.agentpit/.env`.
+
+Or put any other tunnel in front of it on the same machine:
 
 ```bash
 tailscale serve --bg 4317           # private, only your devices
@@ -87,9 +95,17 @@ npx agentpit --public-url https://my-box.tailnet-1234.ts.net
 
 Cloudflare Tunnel, devtunnel or nginx work the same way (WebSockets must pass through).
 
+## Browser-only users
+
+The admin can create people who only get a browser: **Account → Users with their own browser**. Each one signs in with name and password at `/u/<name>/` and sees nothing but their own identity (own cookies and logins) – fullscreen, with sound and microphone on Linux servers (PulseAudio/PipeWire: every identity gets its own virtual sound card and microphone, invisible to websites). No projects, sessions, files or terminals; the server enforces this on every request and WebSocket message.
+
+## Server health
+
+The header shows CPU and RAM of the machine; its panel adds disk, temperature (Jetson, Raspberry Pi), load and the CPU of every running browser, and turns red when the server stays overloaded.
+
 ## Security
 
-Whoever can open the cockpit can run commands on the machine – that is the point of it. So: a password from the first start, "bypass permissions" locked unless `ALLOW_BYPASS_PERMISSIONS=true`, browser logins always done by you, database passwords kept in `~/.agentpit` – keep that folder private. Automated logins and scraping can violate the terms of the sites you use. agentpit is an interface for **your own** Claude Code with **your own** account; if you offer it to others, use an API key.
+Whoever can open the cockpit can run commands on the machine – that is the point of it. So: an admin password from the first start (from the machine itself without setup code, through a tunnel only with the code from the console), "Allow everything" (bypass permissions) locked unless `ALLOW_BYPASS_PERMISSIONS=true` – the admin can unlock it under Account → Permissions, which writes that line to `.env`; access to other projects' resources always asks, browser logins always done by you, database passwords kept in `~/.agentpit` – keep that folder private. Automated logins and scraping can violate the terms of the sites you use. agentpit is an interface for **your own** Claude Code with **your own** account; if you offer it to others, use an API key.
 
 ## FAQ
 

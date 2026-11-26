@@ -56,6 +56,11 @@ class Connection {
   onMessage(l: Listener) { this.listeners.add(l); return () => this.listeners.delete(l); }
   onStatus(l: (up: boolean) => void) { this.statusListeners.add(l); return () => this.statusListeners.delete(l); }
 
+  /** Binary frame (microphone audio); dropped while offline or when the socket is backed up. */
+  sendBinary(data: ArrayBuffer | Uint8Array) {
+    if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < 256 * 1024) this.ws.send(data);
+  }
+
   /** Fire-and-forget. */
   send(t: string, payload: Record<string, unknown> = {}) {
     const s = JSON.stringify({ t, ...payload });

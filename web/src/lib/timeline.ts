@@ -29,7 +29,8 @@ export interface CompactItem extends Base { kind: 'compact'; trigger: string; pr
 export interface PermItem extends Base { kind: 'perm'; toolName: string; decision: string; message?: string | null; answers?: Record<string, string> | null }
 export interface InitItem extends Base { kind: 'init'; model: string; tools: number; mcp: { name: string; status: string }[]; version?: string; mode?: string }
 
-export type Item = UserItem | TextItem | ThinkingItem | ToolItem | NoteItem | OutputItem | TurnItem | CompactItem | PermItem | InitItem;
+export interface DeniedItem extends Base { kind: 'denied'; mode: string; tools: { name: string; detail?: string }[] }
+export type Item = DeniedItem | UserItem | TextItem | ThinkingItem | ToolItem | NoteItem | OutputItem | TurnItem | CompactItem | PermItem | InitItem;
 
 const COMMAND_RE = /<command-name>\s*([^<]+?)\s*<\/command-name>(?:[\s\S]*?<command-args>([\s\S]*?)<\/command-args>)?/;
 const LOCAL_OUT_RE = /<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/;
@@ -170,6 +171,9 @@ export class Timeline {
         return;
       case 'git_commit':
         this.push({ kind: 'note', id: this.nid('n'), v: 0, ts, level: 'dim', text: `Commit ${ev.hash} · ${ev.subject}` });
+        return;
+      case 'permission_denied':
+        this.push({ kind: 'denied', id: this.nid('d'), v: 0, ts, mode: ev.mode ?? '', tools: ev.tools ?? [] });
         return;
       case 'error_note':
         this.push({ kind: 'note', id: this.nid('e'), v: 0, ts, level: 'warn', text: ev.text });
