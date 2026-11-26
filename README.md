@@ -76,6 +76,16 @@ npm i -g agentpit && agentpit     # install permanently
 
 On first start you choose a password in the browser. Data, projects and settings live in `~/.agentpit` (`--home <dir>` or `AGENTPIT_HOME` to change). All options: `.env.example` in the package, copied to `~/.agentpit/.env`.
 
+## Linux server in one command
+
+Debian, Ubuntu, Jetson (x64 or arm64), as a user with sudo or as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ManuelWestermeier/agentpit/main/deploy/install-server.sh | TUNNEL=on bash
+```
+
+Installs Node.js, ffmpeg, Xvfb (visible browsers without a monitor), PulseAudio (own sound card and microphone per identity), agentpit, Chromium with its libraries, and a systemd service that starts at boot. At the end it prints the sign-in link and setup code; with `TUNNEL=on` the HTTPS address shows up in `journalctl -u agentpit`. Run it again to update.
+
 ## Remote access
 
 The server only listens on `127.0.0.1`. The quickest way out is the built-in Cloudflare Tunnel – no open port, no router setup, HTTPS:
