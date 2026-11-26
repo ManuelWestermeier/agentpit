@@ -419,6 +419,8 @@ const AUTH_EN = [
   ['Name: 2–32 Zeichen, a–z, 0–9, Punkt, Minus, Unterstrich.', 'Name: 2–32 characters, a–z, 0–9, dot, dash, underscore.'],
   ['Name oder Passwort falsch.', 'Wrong name or password.'],
   ['Admin-Name', 'Admin name'],
+  ['Cockpit<br><span>einrichten</span>', 'Set up<br><span>the cockpit</span>'],
+  ['Willkommen<br><span>zurück</span>', 'Welcome<br><span>back</span>'],
   ['Lege das Passwort fest, das ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel. Den Einrichtungscode zeigt die Server-Konsole beim Start (oder', 'Choose the password that protects every access from now on – local, via a domain or a tunnel. The setup code is shown in the server console at start (or'],
   ['Ein Passwortmanager-Passwort oder vier zufällige Wörter.', 'A password-manager password or four random words.'],
   ['– sie wird nach erfolgreicher Anmeldung freigegeben.', '– it is allowed after a successful sign-in.'],
@@ -450,7 +452,7 @@ function authPage({ mode, error = null, newHost = null, user = '', local = false
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const setup = mode === 'setup';
   const body = setup
-    ? `<h1>Cockpit einrichten</h1>
+    ? `<h1>Cockpit<br><span>einrichten</span></h1>
 <p>Lege den Admin-Zugang fest, der ab jetzt jeden Zugriff schützt – lokal, über Domain oder Tunnel.${local ? '' : ` Den Einrichtungscode zeigt die Server-Konsole beim Start (oder <code>${cliCmd('link')}</code>).`}</p>
 ${error ? `<p class="err">${esc(error)}</p>` : ''}
 <form method="post" action="/setup">
@@ -460,20 +462,27 @@ ${local ? '' : '<label>Einrichtungscode<input name="code" autocomplete="one-time
 <label>Wiederholen<input type="password" name="password2" autocomplete="new-password" minlength="${MIN_PASSWORD}" required></label>
 <button>Passwort setzen und anmelden</button></form>
 <p class="small">Mindestens ${MIN_PASSWORD} Zeichen. Ein Passwortmanager-Passwort oder vier zufällige Wörter.</p>`
-    : `<h1>Anmelden</h1>
+    : `<h1>Willkommen<br><span>zurück</span></h1>
 ${newHost ? `<p>Neue Adresse <code>${esc(newHost)}</code> – sie wird nach erfolgreicher Anmeldung freigegeben.</p>` : ''}
 ${error ? `<p class="err">${esc(error)}</p>` : ''}
 <form method="post" action="/login"><label>Name<input name="username" autocomplete="username" value="${esc(user)}" placeholder="admin" autocapitalize="none"${user ? '' : ' autofocus'}></label><label>Passwort<input type="password" name="password" autocomplete="current-password"${user ? ' autofocus' : ''} required></label><button>Anmelden</button></form>`;
   return `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Cockpit – ${setup ? 'Einrichten' : 'Anmelden'}</title>
 <style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#15181a;color:#e7e5dd;font:15px/1.5 system-ui,sans-serif}
-main{width:min(400px,92vw);padding:24px 0}.mark{display:flex;gap:10px;align-items:center;font:600 13px/1 system-ui;letter-spacing:.12em;text-transform:uppercase;margin-bottom:28px}
-.mark i{width:4px;height:18px;background:#f0a73a;border-radius:2px}h1{font-weight:600;font-size:22px;letter-spacing:-.01em;margin:0 0 6px}
-p{color:#a8aea9;margin:0 0 16px;font-size:14px}.small{font-size:12.5px;margin-top:14px}label{display:block;font-size:12.5px;color:#a8aea9;margin-bottom:10px}
-input{display:block;width:100%;margin-top:4px;padding:11px 12px;border-radius:7px;border:1px solid #3a4146;background:#111416;color:#e7e5dd;font-size:16px}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#131313;color:#f4f4f2;font:15px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;letter-spacing:-.006em}
+body::before{content:"";position:fixed;inset:-20vh -20vw auto;height:70vh;background:radial-gradient(40% 50% at 30% 40%,rgba(168,85,247,.16),transparent 70%),radial-gradient(35% 45% at 70% 35%,rgba(245,158,11,.12),transparent 70%);pointer-events:none}
+main{position:relative;width:min(400px,92vw);padding:24px 0}
+.mark{display:flex;gap:10px;align-items:center;font:650 14px/1 inherit;letter-spacing:-.01em;margin-bottom:34px;color:#a3a3a0}
+.mark i{width:20px;height:20px;border-radius:6px;background:linear-gradient(90deg,#a855f7,#ec4899 45%,#f59e0b)}
+h1{font-weight:700;font-size:40px;line-height:1.02;letter-spacing:-.04em;margin:0 0 12px}
+h1 span{background:linear-gradient(90deg,#a855f7,#ec4899 45%,#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent}
+p{color:#a3a3a0;margin:0 0 20px;font-size:15px}.small{font-size:13px;margin-top:16px}label{display:block;font-size:13px;color:#a3a3a0;margin-bottom:12px}
+input{display:block;width:100%;margin-top:6px;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.13);background:#1a1a1b;color:#f4f4f2;font-size:16px}
 input[name=code]{font-family:ui-monospace,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase}
-input:focus{outline:none;border-color:#f0a73a;box-shadow:0 0 0 3px rgba(240,167,58,.15)}button{margin-top:12px;width:100%;padding:11px;border:0;border-radius:7px;background:#f0a73a;color:#231603;font-weight:600;font-size:15px;cursor:pointer}
-button:hover{background:#f6b552}.err{color:#e5695e}code{background:#21262a;padding:1px 5px;border-radius:4px;color:#e7e5dd}
-</style><main><div class="mark"><i></i>Cockpit</div>${body}</main></html>`;
+input:focus{outline:none;border-color:rgba(255,255,255,.5);box-shadow:0 0 0 4px rgba(255,255,255,.06)}
+button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:999px;background:#f7f7f5;color:#111;font-weight:600;font-size:15px;cursor:pointer;transition:transform .18s cubic-bezier(.16,1,.3,1),box-shadow .18s}
+button:hover{background:#fff;box-shadow:0 0 0 4px rgba(255,255,255,.08)}button:active{transform:scale(.98)}
+.err{color:#e5695e}code{background:#232325;padding:1px 6px;border-radius:6px;color:#f4f4f2}
+@media (prefers-color-scheme:light){body{background:#f4f4f2;color:#161616}input{background:#fff;border-color:rgba(0,0,0,.14);color:#161616}input:focus{border-color:#161616;box-shadow:0 0 0 4px rgba(0,0,0,.06)}button{background:#161616;color:#fff}button:hover{background:#000}p,label,.mark{color:#5d5d5a}code{background:#ebebe8;color:#161616}}
+</style><main><div class="mark"><i></i>agentpit</div>${body}</main></html>`;
 }

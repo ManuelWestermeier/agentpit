@@ -62,7 +62,7 @@
 
 .banner { margin: 10px 16px 0; padding: 8px 12px; border-radius: var(--r); font-size: var(--t-s); display: flex; gap: 10px; align-items: center; }
 .banner.info { background: var(--sunken); border: 1px solid var(--line); }
-.banner.warn { background: var(--amber-soft); border: 1px solid rgba(240, 167, 58, 0.35); }
+.banner.warn { background: var(--amber-soft); border: 1px solid rgba(247, 165, 49, 0.35); }
 .banner.error { background: var(--red-soft); border: 1px solid rgba(229, 105, 94, 0.4); }
 .banner pre { margin: 4px 0 0; white-space: pre-wrap; font-size: var(--t-xs); max-height: 120px; overflow: auto; }
 

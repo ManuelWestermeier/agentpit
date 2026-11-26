@@ -100,7 +100,7 @@
 
 /* ---- pending approvals */
 .pending { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 0; max-height: 50vh; overflow: auto; }
-.perm { border: 1px solid rgba(240, 167, 58, 0.5); background: linear-gradient(0deg, var(--amber-soft), var(--amber-soft)), var(--panel); border-radius: 8px; padding: 10px 12px; animation: rise 320ms var(--ease); }
+.perm { border: 1px solid rgba(247, 165, 49, 0.5); background: linear-gradient(0deg, var(--amber-soft), var(--amber-soft)), var(--panel); border-radius: 8px; padding: 10px 12px; animation: rise 320ms var(--ease); }
 .perm-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .perm-sub { font-size: var(--t-xs); color: var(--text-2); margin-top: 2px; }
 .perm pre { margin: 8px 0 0; padding: 8px 10px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-s); font: 400 var(--t-s)/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
@@ -138,7 +138,7 @@
 .suggest button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slash { position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); background: var(--raised); border: 1px solid var(--line-strong); border-radius: 8px; max-height: 280px; overflow: auto; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4); z-index: 5; padding: 4px; }
 .slash button { display: grid; grid-template-columns: 150px 1fr; gap: 10px; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none; border-radius: var(--r-s); cursor: pointer; color: var(--text); }
-.slash button:hover, .slash button.on { background: #2b3136; }
+.slash button:hover, .slash button.on { background: var(--raised); }
 .slash code { color: var(--amber); font-size: var(--t-s); }
 .slash span { font-size: var(--t-xs); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachments { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 10px 0; }
@@ -150,7 +150,7 @@
 .bypass-lock code { font: 400 var(--t-xs) var(--mono); background: var(--sunken); padding: 1px 4px; border-radius: 3px; }
 .bypass-lock .check { display: flex; gap: 6px; align-items: center; margin: 6px 0; color: var(--text-1, inherit); }
 .mode-wrap { position: relative; display: inline-flex; }
-.bypass-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; width: min(360px, 86vw); background: var(--panel); border: 1px solid rgba(240, 167, 58, 0.5); border-radius: 8px; padding: 4px 12px 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+.bypass-pop { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; width: min(360px, 86vw); background: var(--panel); border: 1px solid rgba(247, 165, 49, 0.5); border-radius: 8px; padding: 4px 12px 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
 .note.denied { display: block; border-left: 3px solid var(--amber); padding: 4px 0 4px 10px; }
 .note.denied b { color: var(--amber); font-weight: 600; }
 .note.denied .muted { color: var(--text-2); }

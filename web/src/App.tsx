@@ -4,6 +4,7 @@ import { SetupPassword } from './components/Access';
 import { AccountsDialog } from './components/AccountsDialog';
 import { BrowserView } from './components/BrowserView';
 import { BrowserOnly } from './components/BrowserOnly';
+import { SplitView } from './components/Focus';
 import { DataView } from './components/DataView';
 import { FilesView } from './components/FilesView';
 import { GitView } from './components/GitView';
@@ -26,6 +27,7 @@ export function App() {
   const profileView = useStore((s) => s.profileView);
   const loginOpen = useStore((s) => s.loginOpen);
   const usageOpen = useStore((s) => s.usageOpen);
+  const split = useStore((s) => s.focus.split);
   const pendingCount = useStore((s) => Object.values(s.runners).reduce((n, r) => n + (r.pending?.length ?? 0), 0));
   const [showSide, setShowSide] = useState(false);
 
@@ -48,10 +50,13 @@ export function App() {
   else if (!activeId) {
     body = (
       <div className="empty">
-        <button className="btn primary" onClick={() => newProject()}>Neues Projekt</button>
+        <h2>Viele Agenten.<br /><span className="grad-text">Ein Cockpit.</span></h2>
+        <p className="hero-sub">Jedes Projekt bekommt eine eigene Claude-Session, einen eigenen Ordner und auf Wunsch einen echten Browser.</p>
+        <button className="btn primary" onClick={() => newProject()}>Erstes Projekt anlegen</button>
       </div>
     );
-  } else if (tab === 'session') body = <SessionView />;
+  } else if (split && (tab === 'session' || tab === 'browser')) body = <SplitView chat={<SessionView />} browser={<ProjectBrowser />} />;
+  else if (tab === 'session') body = <SessionView />;
   else if (tab === 'browser') body = <ProjectBrowser />;
   else if (tab === 'files') body = <FilesView />;
   else if (tab === 'git') body = <GitView />;

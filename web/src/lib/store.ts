@@ -48,6 +48,7 @@ interface State {
   toasts: Toast[];
   loginOpen: boolean;
   monitor: MonitorSnapshot | null;
+  focus: { split: boolean; flip: boolean; width: number };
   tunnel: TunnelSnapshot | null;
   draft: Record<string, string>;
 
@@ -240,6 +241,7 @@ export const useStore = create<State>()((set, get) => {
     toasts: [],
     loginOpen: false,
     monitor: null,
+    focus: (() => { try { return { split: false, flip: false, width: 44, ...JSON.parse(localStorage.getItem('cockpit.focus') ?? '{}') }; } catch { return { split: false, flip: false, width: 44 }; } })(),
     tunnel: null,
     draft: {},
 

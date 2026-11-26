@@ -1,5 +1,6 @@
 import { Menu, Settings2 } from 'lucide-react';
 import { ServerPill } from './Ops';
+import { FocusSwitch } from './Focus';
 import { useState } from 'react';
 import { STATE_LABEL, fmtDuration, fmtPct, fmtUsd } from '../lib/format';
 import { useActive, useNow } from '../lib/hooks';
@@ -56,6 +57,7 @@ export function Header({ onToggleSide }: { onToggleSide: () => void }) {
             </div>
           )}
         </div>
+        <FocusSwitch />
         <ServerPill />
         <UsagePill />
         <button className="btn ghost icon" title="Projekteinstellungen" onClick={() => setSettings(true)}><Settings2 size={16} /></button>

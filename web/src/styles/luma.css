@@ -1,0 +1,80 @@
+/* Layout layer of the "evening poster" direction (tokens in base.css):
+   the sidebar and the content are calm surfaces without hard rules, everything you act on is a
+   rounded card or a pill, the one bright thing per screen is the white primary pill. */
+
+/* ---- sidebar: no rule, a slightly darker column */
+.sidebar { background: var(--bg); border-right: 0; }
+.brand { padding: 16px 16px 12px; }
+.brand-mark { width: 20px; height: 20px; border-radius: 6px; background: var(--grad); display: block; position: relative; }
+.brand-mark i, .brand-mark b { display: none; }
+.brand-mark::after { content: ''; position: absolute; inset: 5px; border-radius: 3px; background: var(--bg); opacity: .9; }
+.brand-name { font: 650 var(--t-m)/1 var(--sans); letter-spacing: -0.02em; text-transform: none; }
+.side-head { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--text); font-size: var(--t-s); padding: 12px 8px 6px; }
+.proj { border-radius: 12px; padding: 8px 10px; }
+.proj.active { background: var(--raised); border-color: transparent; box-shadow: var(--shadow); }
+.proj.active::before { display: none; }
+.sess { border-radius: 10px; }
+.side-foot { border-top: 0; }
+.hint { border-radius: 12px; }
+
+/* ---- main column as one large card next to the sidebar */
+.main { background: var(--panel); border-radius: 18px 0 0 18px; margin: 8px 0 8px 0; box-shadow: var(--shadow); overflow: hidden; }
+.header { border-bottom: 0; }
+.header-title h1 { font-weight: 650; letter-spacing: -0.025em; font-size: 18px; }
+.tabs-main { gap: 4px; padding: 2px 14px 10px; }
+.tab { border: 0; margin: 0; padding: 6px 13px; border-radius: 999px; font-weight: 500; }
+.tab:hover { background: var(--raised); }
+.tab.active { background: var(--text); color: var(--bg); border: 0; }
+.tab.active .badge-dot { box-shadow: 0 0 0 2px var(--text); }
+.usage-pill { border-color: var(--line); background: var(--raised); }
+
+/* ---- composer: a floating card, focus = white rim */
+.composer { border-top: 0; background: transparent; padding: 8px 16px 14px; }
+.composer-box { border-radius: 18px; background: var(--raised); border-color: var(--line); box-shadow: var(--shadow); }
+.composer-box:focus-within { border-color: rgba(255, 255, 255, 0.35); box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05), var(--shadow); }
+.composer-box.drag { border-color: var(--amber); }
+.mini-select { border-radius: 999px !important; }
+
+/* ---- cards: approvals, dialogs, templates, toasts */
+.perm { border-radius: var(--r-card); border-color: rgba(247, 165, 49, 0.35); box-shadow: var(--shadow); padding: 12px 14px; }
+.modal-bg { background: rgba(6, 6, 7, 0.6); backdrop-filter: blur(10px); }
+.modal { border-radius: 22px; border-color: var(--line-strong); padding: 22px 24px 22px; }
+.modal h2 { font-weight: 650; letter-spacing: -0.025em; }
+.toast { border-radius: 14px; border-left-width: 1px; }
+.toast.warn { border-color: rgba(247, 165, 49, 0.5); }
+.toast.error { border-color: rgba(229, 105, 94, 0.55); }
+.template { border-radius: var(--r-card); padding: 14px; background: var(--raised); box-shadow: var(--shadow);
+  transition: transform 220ms var(--ease), border-color 220ms var(--ease); }
+.template:hover { border-color: var(--line-strong); transform: translateY(-2px) rotate(-0.4deg); }
+.template:nth-child(even):hover { transform: translateY(-2px) rotate(0.4deg); }
+.template-icon { color: var(--text); }
+.bdialog, .srv-panel, .bypass-pop, .bnotice { border-radius: var(--r-card); }
+.btoolbar { gap: 4px; }
+
+/* ---- empty states: the brand moment (gradient line, one white pill) */
+.empty h2 { font-size: clamp(26px, 4vw, 40px); line-height: 1.02; font-weight: 700; letter-spacing: -0.035em; margin-bottom: 12px; }
+.empty .hero-sub { font-size: var(--t-l); color: var(--text-2); max-width: 34ch; margin: 0 auto 22px; line-height: 1.45; }
+.empty .btn.primary { height: 40px; padding: 0 20px; font-size: var(--t-m); }
+
+/* ---- browser view: the page is the poster, chrome recedes */
+.bview { background: var(--bg); }
+.bstage img { border-radius: 10px; box-shadow: 0 0 0 1px var(--line), 0 20px 50px rgba(0, 0, 0, 0.45); }
+.bview--full .bstage img { border-radius: 0; }
+.burl { border-radius: 999px !important; }
+
+/* ---- main focus: chat, browser or both side by side */
+.focus-switch { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); }
+.focus-switch button { border: 0; background: none; color: var(--text-2); height: 24px; padding: 0 10px; border-radius: 999px; font-size: var(--t-xs); font-weight: 600; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
+.focus-switch button:hover { color: var(--text); }
+.focus-switch button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, var(--split, 44%)) 6px minmax(0, 1fr); }
+.split.flip { grid-template-columns: minmax(0, 1fr) 6px minmax(340px, var(--split, 44%)); }
+.split > .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.split-grip { cursor: col-resize; position: relative; }
+.split-grip::after { content: ''; position: absolute; top: 50%; left: 2px; width: 2px; height: 40px; transform: translateY(-50%); border-radius: 2px; background: var(--line-strong); }
+.split-grip:hover::after { background: var(--text-2); }
+@media (max-width: 1000px) { .split, .split.flip { grid-template-columns: minmax(0, 1fr); } .split-grip, .split > .pane.secondary { display: none; } }
+
+@media (max-width: 860px) {
+  .main { border-radius: 0; margin: 0; }
+}
