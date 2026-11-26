@@ -78,3 +78,13 @@
 @media (max-width: 860px) {
   .main { border-radius: 0; margin: 0; }
 }
+
+/* remote <select> and file drop */
+.bselect { max-height: min(70vh, 520px); display: flex; flex-direction: column; }
+.bselect-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.bselect-list button { text-align: left; border: 0; background: none; color: var(--text); padding: 9px 12px; border-radius: 10px; font-size: var(--t-m); cursor: pointer; }
+.bselect-list button:hover, .bselect-list button:focus-visible { background: var(--raised); }
+.bselect-list button.on { background: var(--text); color: var(--bg); }
+.bselect-list button:disabled { opacity: .4; cursor: default; }
+.bselect-list small { display: block; color: var(--text-3); font-size: var(--t-xs); margin: 6px 0 2px; }
+.bdrop { position: absolute; inset: 12px; z-index: 16; display: grid; place-items: center; border: 2px dashed var(--line-strong); border-radius: var(--r-card); background: rgba(10, 10, 11, .55); color: var(--text); font-weight: 600; pointer-events: none; }

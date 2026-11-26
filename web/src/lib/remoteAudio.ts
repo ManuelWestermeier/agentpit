@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { conn } from './ws';
 
 const MIC_RATE = 24_000; // server/audio.js MIC_RATE
-const MIME = 'audio/mp4; codecs="mp4a.40.2"';
+const MIME = 'audio/mp4; codecs="mp4a.40.2"'; // Linux/PulseAudio path
+const WEBM = 'audio/webm; codecs="opus"'; // tab capture through the extension
 
 type MS = typeof MediaSource;
 const MediaSourceImpl: MS | undefined = (window as unknown as { ManagedMediaSource?: MS }).ManagedMediaSource ?? window.MediaSource;
@@ -22,47 +23,55 @@ export function useRemoteAudio(profileId: string) {
 
   useEffect(() => {
     if (!sound) return;
-    if (!MediaSourceImpl?.isTypeSupported(MIME)) { setError('Dieser Browser kann den Ton nicht abspielen.'); setSound(false); return; }
-    const ms = new MediaSourceImpl();
+    if (!MediaSourceImpl) { setError('Dieser Browser kann den Ton nicht abspielen.'); setSound(false); return; }
     const el = new Audio();
     (el as HTMLAudioElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
-    el.src = URL.createObjectURL(ms);
     audio.current = el;
-    let sb: SourceBuffer | null = null;
-    const queue: Uint8Array[] = [];
     let alive = true;
+    let ms: MediaSource | null = null;
+    let sb: SourceBuffer | null = null;
+    let queue: Uint8Array[] = [];
     const pump = () => {
-      if (!sb || sb.updating || !queue.length) return;
-      try { sb.appendBuffer(queue.shift()! as BufferSource); } catch { queue.length = 0; }
+      if (!sb || sb.updating || !queue.length || ms?.readyState !== 'open') return;
+      try { sb.appendBuffer(queue.shift()! as BufferSource); } catch { queue = []; }
     };
     const live = () => {
       if (!sb || !el.buffered.length) return;
       const end = el.buffered.end(el.buffered.length - 1);
-      if (end - el.currentTime > 0.6) el.currentTime = Math.max(0, end - 0.15);
+      if (end - el.currentTime > 0.6) el.currentTime = Math.max(0, end - 0.15); // stay at the live edge
       if (!sb.updating && el.currentTime > 30) { try { sb.remove(0, el.currentTime - 10); } catch { /* busy */ } }
       if (el.paused) el.play().catch(() => {});
     };
-    ms.addEventListener('sourceopen', () => {
-      sb = ms.addSourceBuffer(MIME);
-      sb.mode = 'sequence';
-      sb.addEventListener('updateend', () => { pump(); live(); });
-      pump();
-    });
+    // every recording start (new tab, new listener) brings a new header: start a fresh pipeline with it
+    const begin = (codec: string, init: Uint8Array) => {
+      const mime = codec === 'webm' ? WEBM : MIME;
+      if (!MediaSourceImpl!.isTypeSupported(mime)) { setError(codec === 'webm' ? 'Dieser Browser spielt den Ton (Opus/WebM) nicht ab – Chrome, Edge oder Firefox verwenden.' : 'Dieser Browser kann den Ton nicht abspielen.'); return; }
+      if (el.src) URL.revokeObjectURL(el.src);
+      const next = new MediaSourceImpl!();
+      ms = next; sb = null; queue = [init];
+      el.src = URL.createObjectURL(next);
+      next.addEventListener('sourceopen', () => {
+        if (ms !== next) return;
+        sb = next.addSourceBuffer(mime);
+        sb.mode = 'sequence';
+        sb.addEventListener('updateend', () => { pump(); live(); });
+        pump();
+      });
+      el.play().catch(() => {});
+    };
     const off = conn.onMessage((m) => {
       if (m.t !== 'bmedia' || m.profileId !== profileId || m.kind !== 'audio') return;
-      if (m.ended) return;
-      if (m.init) queue.unshift(b64(m.init));
-      else if (m.data) { queue.push(b64(m.data)); if (queue.length > 40) queue.splice(1, queue.length - 20); }
-      pump();
+      if (m.reset || m.ended) { queue = []; return; }
+      if (m.init) begin(m.codec ?? 'mp4', b64(m.init));
+      else if (m.data && (sb || queue.length)) { queue.push(b64(m.data)); if (queue.length > 40) queue.splice(1, queue.length - 20); pump(); }
     });
-    el.play().catch(() => {});
     conn.call('browsers.audio', { id: profileId, on: true }).catch((e) => { if (alive) { setError(e.message); setSound(false); } });
     return () => {
       alive = false;
       off();
       conn.send('browsers.audio', { id: profileId, on: false });
       el.pause();
-      URL.revokeObjectURL(el.src);
+      if (el.src) URL.revokeObjectURL(el.src);
       audio.current = null;
     };
   }, [sound, profileId]);
@@ -120,5 +129,50 @@ export function useRemoteAudio(profileId: string) {
     };
   }, [mic, profileId]);
 
-  return { sound, setSound, mic, setMic, error, clearError: () => setError(null) };
+  // camera: 640×480 JPEG frames, ~15 per second, as binary frames [2][id]
+  const [cam, setCam] = useState(false);
+  const preview = useRef<MediaStream | null>(null);
+  useEffect(() => {
+    if (!cam) return;
+    let stop = () => {};
+    let done = false;
+    (async () => {
+      try {
+        await conn.call('browsers.cam', { id: profileId, on: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } } });
+        preview.current = stream;
+        const v = document.createElement('video');
+        v.muted = true; v.playsInline = true; v.srcObject = stream;
+        await v.play();
+        const c = document.createElement('canvas');
+        const g = c.getContext('2d')!;
+        const id = new TextEncoder().encode(profileId);
+        let busy = false;
+        const timer = window.setInterval(() => {
+          if (busy || !v.videoWidth) return;
+          const w = Math.min(640, v.videoWidth), h = Math.round((w / v.videoWidth) * v.videoHeight);
+          if (c.width !== w) { c.width = w; c.height = h; }
+          g.drawImage(v, 0, 0, w, h);
+          busy = true;
+          c.toBlob((b) => {
+            busy = false;
+            if (!b) return;
+            b.arrayBuffer().then((buf) => {
+              const f = new Uint8Array(2 + id.length + buf.byteLength);
+              f[0] = 2; f[1] = id.length; f.set(id, 2); f.set(new Uint8Array(buf), 2 + id.length);
+              conn.sendBinary(f);
+            });
+          }, 'image/jpeg', 0.7);
+        }, 66);
+        stop = () => { clearInterval(timer); stream.getTracks().forEach((t) => t.stop()); preview.current = null; };
+        if (done) stop();
+      } catch (e) {
+        setError((e as Error).name === 'NotAllowedError' ? 'Kamera wurde nicht erlaubt.' : (e as Error).message);
+        setCam(false);
+      }
+    })();
+    return () => { done = true; stop(); conn.send('browsers.cam', { id: profileId, on: false }); };
+  }, [cam, profileId]);
+
+  return { sound, setSound, mic, setMic, cam, setCam, error, clearError: () => setError(null) };
 }

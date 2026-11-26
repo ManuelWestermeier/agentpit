@@ -3,10 +3,10 @@ import { UserError } from './util.js';
 /** What a browser user may do over the WebSocket – only on the identities assigned to them. */
 const BROWSER_ACTIONS = new Set([
   'hello', 'browsers.view', 'browsers.input', 'browsers.nav', 'browsers.tab', 'browsers.fack', 'browsers.stream',
-  'browsers.resize', 'browsers.dialog', 'browsers.fedcm', 'browsers.files', 'browsers.start', 'browsers.stop', 'browsers.audio', 'browsers.mic',
+  'browsers.resize', 'browsers.dialog', 'browsers.fedcm', 'browsers.files', 'browsers.start', 'browsers.stop', 'browsers.audio', 'browsers.mic', 'browsers.cam', 'browsers.select', 'browsers.drop',
 ]);
 /** Broadcasts a browser user receives (everything else – projects, sessions, usage, logins – stays with the admin). */
-const BROWSER_BROADCASTS = new Set(['ack', 'hello', 'config', 'browsers', 'bframe', 'bstate', 'bstats', 'bdialog', 'bfedcm', 'bfile', 'bnotice', 'bmedia']);
+const BROWSER_BROADCASTS = new Set(['ack', 'hello', 'config', 'browsers', 'bframe', 'bstate', 'bstats', 'bdialog', 'bfedcm', 'bfile', 'bnotice', 'bmedia', 'bselect']);
 
 /**
  * Roles: "admin" (the cockpit password) may do everything; "browser" users (data/users.json) only drive

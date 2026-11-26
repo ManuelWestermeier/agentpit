@@ -158,8 +158,24 @@ export function createActions(ctx) {
     'browsers.dialog': async (msg) => { await ctx.browsers.answerDialog(String(msg.id), !!msg.accept, msg.text); return null; },
     'browsers.install': () => { ctx.browsers.installBrowsers(); return null; },
     'browsers.fedcm': async (msg) => { await ctx.browsers.answerFedCm(String(msg.id), { action: String(msg.action ?? ''), index: msg.index }); return null; },
-    'browsers.audio': async (msg, client) => { await ctx.audio.listen(String(msg.id), client, msg.on !== false); return null; },
-    'browsers.mic': async (msg, client) => { if (msg.on === false) ctx.audio.micOff(String(msg.id)); else await ctx.audio.micOn(String(msg.id), client); return null; },
+    // sound out: the extension's tab capture (every OS), else PulseAudio on Linux
+    'browsers.audio': async (msg, client) => {
+      const id = String(msg.id), on = msg.on !== false;
+      if (ctx.bridge.connected(id) || !on) { ctx.bridge.listen(id, client, on); await ctx.audio.listen(id, client, false); return { via: 'bridge' }; }
+      await ctx.audio.listen(id, client, on);
+      return { via: 'pulse' };
+    },
+    // microphone in: a real PulseAudio microphone where available (Linux), else through the extension
+    'browsers.mic': async (msg, client) => {
+      const id = String(msg.id);
+      if (msg.on === false) { ctx.audio.micOff(id); ctx.bridge.device(id, client, 'mic', false); return null; }
+      if (await ctx.audio.available()) { await ctx.audio.micOn(id, client); return { via: 'pulse' }; }
+      ctx.bridge.device(id, client, 'mic', true);
+      return { via: 'bridge' };
+    },
+    'browsers.cam': (msg, client) => { ctx.bridge.device(String(msg.id), client, 'cam', msg.on !== false); return null; },
+    'browsers.select': (msg) => { ctx.bridge.choose(String(msg.id), msg.sel, msg.index); return null; },
+    'browsers.drop': async (msg) => { await ctx.browsers.dropFiles(String(msg.id), msg); return null; },
     'browsers.files': async (msg) => { await ctx.browsers.chooseFiles(String(msg.id), msg.files ?? []); return null; },
 
     // ---- git

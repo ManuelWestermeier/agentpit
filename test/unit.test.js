@@ -423,3 +423,27 @@ test('audio: fMP4 stream splits into init segment and fragments', async () => {
   assert.equal(inits[0].length, 60);
   assert.deepEqual(frags.map((f) => f.length), [124, 74]);
 });
+
+test('media bridge: extension socket only from 127.0.0.1, with token and our extension origin', async () => {
+  const { Bridge, EXTENSION_ID } = await import('../server/bridge.js');
+  const dataDir = tmp('bridge');
+  const b = new Bridge({ config: { dataDir, port: 1 }, browsers: { profiles: new Map([['id1', {}]]) }, hub: { send() {} } });
+  const attempt = (url, { ip = '127.0.0.1', origin = `chrome-extension://${EXTENSION_ID}` } = {}) => {
+    let out = '';
+    const socket = { write: (s) => { out += s; }, destroy() {} };
+    b.wss.handleUpgrade = () => { out = 'UPGRADED'; };
+    b.handleUpgrade({ url, headers: { origin }, socket: { remoteAddress: ip } }, socket, Buffer.alloc(0));
+    return out;
+  };
+  const good = `/ext?role=sw&id=id1&token=${b.token}`;
+  assert.equal(attempt(good), 'UPGRADED');
+  assert.match(attempt(`/ext?role=sw&id=id1&token=falsch`), /403/);
+  assert.match(attempt(good, { ip: '10.0.0.5' }), /403/);
+  assert.match(attempt(good, { origin: 'https://evil.example' }), /403/);
+  assert.match(attempt(`/ext?role=sw&id=unbekannt&token=${b.token}`), /403/);
+  // the folder for the browser holds the extension and this installation's settings
+  const { dir, args } = b.prepare('id1');
+  assert.ok(fs.existsSync(path.join(dir, 'manifest.json')));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).token, b.token);
+  assert.ok(args.some((a) => a.startsWith('--load-extension=')));
+});

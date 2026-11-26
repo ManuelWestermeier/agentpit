@@ -31,6 +31,7 @@ import { createAccess } from './access.js';
 import { Monitor } from './monitor.js';
 import { Tunnel } from './tunnel.js';
 import { Audio } from './audio.js';
+import { Bridge } from './bridge.js';
 import { Sessions } from './sessions.js';
 import { mountStatic } from './static.js';
 import { Store, isProjectId } from './store.js';
@@ -86,6 +87,7 @@ async function main() {
   ctx.monitor = new Monitor(ctx);
   ctx.tunnel = new Tunnel(ctx);
   ctx.audio = new Audio(ctx);
+  ctx.bridge = new Bridge(ctx);
 
   if (process.env.COCKPIT_MOCK === '1') {
     // Development only: scripted fake sessions to exercise the UI without a Claude login.
@@ -175,14 +177,16 @@ async function main() {
   ctx.github.on('change', () => hub.toAll({ t: 'github', github: ctx.github.snapshot() }));
   ctx.tunnel.on('change', throttle(() => hub.toAll({ t: 'tunnel', tunnel: ctx.tunnel.snapshot() }), 300));
   hub.on('connect', async (client) => hub.send(client, { t: 'hello', ...(await ctx.helloPayload(client)) }));
-  hub.on('disconnect', (client) => { ctx.browsers.dropClient(client); ctx.audio.dropClient(client); });
-  // binary frame: [1 = mic][id length][id][PCM s16le mono] – only for identities this client may use
+  hub.on('disconnect', (client) => { ctx.browsers.dropClient(client); ctx.audio.dropClient(client); ctx.bridge.dropClient(client); });
+  // binary frame from a viewer: [1 = mic PCM s16le mono 24 kHz | 2 = camera JPEG][id length][id][data]
   hub.binary = (client, buf) => {
-    if (!Buffer.isBuffer(buf) || buf.length < 3 || buf[0] !== 1) return;
+    if (!Buffer.isBuffer(buf) || buf.length < 3 || (buf[0] !== 1 && buf[0] !== 2)) return;
     const n = buf[1];
     const id = buf.toString('utf8', 2, 2 + n);
     if (!ctx.access.canUseBrowser(client.user ? { user: client.user } : { id: client.session }, id)) return;
-    ctx.audio.micData(id, client, buf.subarray(2 + n));
+    const data = buf.subarray(2 + n);
+    if (buf[0] === 1 && ctx.audio.mics.get(id)?.owner === client) ctx.audio.micData(id, client, data);
+    else ctx.bridge.data(id, client, buf[0], data);
   };
   hub.onMessage(createActions(ctx));
 
@@ -263,7 +267,9 @@ async function main() {
 
   const server = http.createServer(app);
   server.on('upgrade', (req, socket, head) => {
-    const session = new URL(req.url, 'http://x').pathname === '/ws' ? security.verifyUpgrade(req) : null;
+    const pathname = new URL(req.url, 'http://x').pathname;
+    if (pathname === '/ext') return ctx.bridge.handleUpgrade(req, socket, head); // media bridge extension (token, 127.0.0.1)
+    const session = pathname === '/ws' ? security.verifyUpgrade(req) : null;
     if (!session) {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();

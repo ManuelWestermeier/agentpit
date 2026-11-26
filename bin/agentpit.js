@@ -16,6 +16,7 @@ Usage
   npx agentpit link               print the login link and setup code
   npx agentpit set-password       set a new password (signs everyone out)
   npx agentpit install-browser    download Chromium + ffmpeg for browser identities
+                                  (Linux server: sudo npx agentpit install-browser --with-deps)
   npx agentpit mcp <identity>     a browser identity as MCP server for Claude Code
                                   (claude mcp add work -- npx -y agentpit mcp work)
 
@@ -51,6 +52,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--tunnel') process.env.TUNNEL = 'on';
   else if (a === 'start') cmd = null;
   else if (cmds[a]) cmd = a;
+  else if (a === '--with-deps' && cmd === 'install-browser') { /* read by the script itself (Linux system libraries) */ }
   else { console.error(`Unknown argument: ${a}\n\n${HELP}`); process.exit(1); }
 }
 

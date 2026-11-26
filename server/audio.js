@@ -84,8 +84,8 @@ export class Audio {
   }
 
   async status() {
-    const ok = await this.available();
-    return { available: ok, reason: ok ? null : process.platform !== 'linux' ? 'nur auf Linux-Servern (PulseAudio/PipeWire)' : 'pactl/ffmpeg fehlen – sudo apt install pulseaudio-utils pulseaudio ffmpeg' };
+    const pulse = await this.available();
+    return { available: true, pulse };
   }
 
   sink(id) { return `cockpit_${id.replace(/[^a-z0-9]/g, '_')}`; }
@@ -131,7 +131,7 @@ export class Audio {
       if (!s.listeners.size) this.#stopStream(id);
       return;
     }
-    if (!(await this.available())) throw Object.assign(new Error((await this.status()).reason), { user: true });
+    if (!(await this.available())) throw Object.assign(new Error(process.platform === 'linux' ? 'Kein PulseAudio/PipeWire – sudo apt install pulseaudio-utils pulseaudio' : 'Ton-Brücke nicht verbunden – Browser einmal neu starten.'), { user: true });
     let s = this.streams.get(id);
     if (!s) s = this.#startStream(id);
     s.listeners.add(client);
@@ -171,7 +171,7 @@ export class Audio {
   // ---------------------------------------------------------------- viewer microphone → identity
 
   async micOn(id, client) {
-    if (!(await this.available())) throw Object.assign(new Error((await this.status()).reason), { user: true });
+    if (!(await this.available())) throw Object.assign(new Error(process.platform === 'linux' ? 'Kein PulseAudio/PipeWire – sudo apt install pulseaudio-utils pulseaudio' : 'Ton-Brücke nicht verbunden – Browser einmal neu starten.'), { user: true });
     await this.prepare(id, this.ctx.browsers?.profiles.get(id)?.name);
     const cur = this.mics.get(id);
     if (cur && cur.owner !== client) cur.ws.destroy(); // newest speaker wins

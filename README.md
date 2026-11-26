@@ -97,7 +97,15 @@ Cloudflare Tunnel, devtunnel or nginx work the same way (WebSockets must pass th
 
 ## Browser-only users
 
-The admin can create people who only get a browser: **Account → Users with their own browser**. Each one signs in with name and password at `/u/<name>/` and sees nothing but their own identity (own cookies and logins) – fullscreen, with sound and microphone on Linux servers (PulseAudio/PipeWire: every identity gets its own virtual sound card and microphone, invisible to websites). No projects, sessions, files or terminals; the server enforces this on every request and WebSocket message.
+The admin can create people who only get a browser: **Account → Users with their own browser**. Each one signs in with name and password at `/u/<name>/` and sees nothing but their own identity (own cookies and logins). No projects, sessions, files or terminals; the server enforces this on every request and WebSocket message.
+
+## Remote browser like a local one
+
+- **Sound** of the shown tab plays on your device instead of the server's speakers, **microphone and camera** of your device become the page's microphone and camera (video calls, voice messages) – on Windows, macOS and Linux, through a small extension the cockpit loads into every identity (Edge, Chromium; Google Chrome ≥ 137 blocks extensions loaded by start flag). On Linux with PulseAudio/PipeWire the microphone is a real virtual sound device.
+- **Fullscreen** like a real browser, and it follows websites that go fullscreen (videos).
+- **Dropdowns, file choosers, "Sign in with Google" dialogs** open on your device – the native widgets of a remote browser are otherwise invisible.
+- **Drag & drop**: files from your computer onto the page, and dragging inside the page.
+- Taps from phones arrive like clicks; input never freezes the view – a stuck page shows why and offers "reload tab".
 
 ## Server health
 

@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "agentpit media bridge",
+  "description": "Sound, microphone, camera and dropdowns for remote viewers of this agentpit browser identity.",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzlLjycAD5ZpIWQqWbvpsTNI4AgEZ4OTTXN7BDZ0NuSmfNnIwVAUHm9ZCo7Uao/MdAMI9HCQfwp3/yA5X3XbdtIweytsWBRSZb4PrB51iIpbaV6UtLekDAr4hqV0bc3157HiVIEwbWTw5PiDK3DnIXrxlkn/M0lZzvviDmQD8r8i9ygEwNZ5JqMFxLQ3tUx4F6zKDlSHe99S8efLy6dIwuhSsAcYvNDLdUytSEKS2m5OAqLgz1dr5Ff/nGogyIiYGi19qPAj3DAwKJdR6B9VUOANAVsBUkKmLqeQR8oLZZLvjJ+PItvxaR3BhshhZgtpm6TVsbiTY6OAotrcr3tZ8AwIDAQAB",
+  "minimum_chrome_version": "116",
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "tabs",
+    "alarms"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "main.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "isolated.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ]
+}

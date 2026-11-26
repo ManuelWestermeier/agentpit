@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import { HOME, ROOT } from './config.js';
+import { HOME, ROOT, cliCmd } from './config.js';
 import { chromiumSearchPaths, findBrowserExecutable, playwrightMcpCli } from './environment.js';
 import { UserError, slugify, stripAnsi, throttle, withTimeout } from './util.js';
 import { Cdp } from './cdp.js';
@@ -299,7 +299,7 @@ export class Browsers extends EventEmitter {
   list({ hidden = false } = {}) {
     return [...this.profiles.values()].filter((p) => hidden || !p.hidden).map((p) => {
       const r = this.running.get(p.id);
-      return { ...p, running: !!r, starting: !!r?.starting, port: r?.port ?? p.port ?? null, viewers: r?.viewers.size ?? 0, url: r?.state?.url ?? null, title: r?.state?.title ?? null };
+      return { ...p, running: !!r, starting: !!r?.starting, port: r?.port ?? p.port ?? null, viewers: r?.viewers.size ?? 0, bridge: !!this.ctx.bridge?.connected(p.id), url: r?.state?.url ?? null, title: r?.state?.title ?? null };
     });
   }
 
@@ -473,7 +473,7 @@ export class Browsers extends EventEmitter {
       // Windows Microsoft account and syncs passwords/history/tabs between all of them)
       '--disable-sync',
       '--disk-cache-size=268435456', // HTTP cache max. 256 MB per identity (default grows with the disk)
-      `--disable-features=Translate,MediaRouter${process.platform === 'win32' ? ',CalculateNativeWinOcclusion' : ''}`,
+      `--disable-features=Translate,MediaRouter,DisableLoadExtensionCommandLineSwitch${process.platform === 'win32' ? ',CalculateNativeWinOcclusion' : ''}`,
       '--window-size=1366,860',
       // keep rendering (and the screencast) going when the window is covered or in the background
       '--disable-backgrounding-occluded-windows',
@@ -496,6 +496,8 @@ export class Browsers extends EventEmitter {
       const ua = headedUserAgent(exe, p.engine);
       if (ua) args.push(`--user-agent=${ua}`);
     }
+    // media bridge: sound, microphone, camera, dropdowns for remote viewers (server/bridge.js)
+    try { const ext = this.ctx.bridge?.prepare(id); if (ext) args.push(...ext.args); } catch (e) { console.warn(`[browser] ${id}: Medien-Brücke nicht vorbereitet – ${e.message}`); }
     if (p.proxy) args.push(`--proxy-server=${p.proxy}`);
     if (p.lang) args.push(`--lang=${p.lang}`);
     await writeLanguagePrefs(userDir, acceptLanguages(p)).catch(() => {});
@@ -538,13 +540,16 @@ export class Browsers extends EventEmitter {
           entry.uaPatch = { userAgent: ua, platform: navigatorPlatform(), userAgentMetadata: headedUaMetadata(ver.product.split('/')[1] ?? '0', p.engine) };
         }
         entry.statsTimer = setInterval(() => this.#tickStream(entry), 1500);
+        entry.statsTimer.unref?.();
         await this.#watchTargets(entry);
         entry.ready = true;
       } catch (e) {
         try { proc?.kill(); } catch { /* gone */ }
         this.running.delete(id);
         const detail = logTail(entry.logFile);
-        throw new UserError(`${e instanceof UserError ? e.message : `Browser-Start fehlgeschlagen: ${e.message}`}${detail ? `\n${detail}` : ''}`);
+        // Linux without the browser's system libraries: say exactly what to run
+        const libs = /error while loading shared libraries|cannot open shared object/i.test(detail) ? `\nSystembibliotheken fehlen – einmal ausführen: sudo ${cliCmd('install-browser')} --with-deps` : '';
+        throw new UserError(`${e instanceof UserError ? e.message : `Browser-Start fehlgeschlagen: ${e.message}`}${libs}${detail ? `\n${detail}` : ''}`);
       } finally {
         entry.starting = null;
         this.emitList();
@@ -688,6 +693,7 @@ export class Browsers extends EventEmitter {
       if (targetId === entry.active) this.#toViewers(entry, { t: 'bnotice', profileId: entry.id, level: 'error', text: 'Der Tab ist abgestürzt – neu laden.' });
     });
     cdp.on('Page.screencastFrame', (f, sid) => this.#onFrame(entry, f, sid));
+    cdp.on('Input.dragIntercepted', ({ data }, sid) => { if (sid === entry.ctl?.sid) entry.drag = { data, sid, entered: false }; });
     cdp.on('Page.javascriptDialogOpening', (d, sid) => {
       entry.dialog = { sid, type: d.type, message: d.message, defaultValue: d.defaultPrompt ?? '' };
       this.#toViewers(entry, { t: 'bdialog', profileId: entry.id, type: d.type, message: d.message, defaultValue: d.defaultPrompt ?? '' });
@@ -703,7 +709,7 @@ export class Browsers extends EventEmitter {
     cdp.on('FedCm.dialogClosed', () => { entry.fedcm = null; this.#toViewers(entry, { t: 'bfedcm', profileId: entry.id, closed: true }); });
     // a file input in a remote browser would open an OS dialog nobody can see – the viewer picks files instead
     cdp.on('Page.fileChooserOpened', (c, sid) => {
-      if (sid !== entry.cast?.sid) return;
+      if (sid !== entry.ctl?.sid) return;
       entry.chooser = { sid, backendNodeId: c.backendNodeId, mode: c.mode };
       this.#toViewers(entry, { t: 'bfile', profileId: entry.id, multiple: c.mode === 'selectMultiple' });
     });
@@ -761,7 +767,7 @@ export class Browsers extends EventEmitter {
     if (!targetId || !entry.pages.has(targetId)) return;
     entry.active = targetId;
     entry.lastFrame = null;
-    entry.cdp.send('Target.activateTarget', { targetId }).catch(() => {});
+    entry.cdp.send('Target.activateTarget', { targetId }).then(() => this.ctx.bridge?.tabChanged(entry.id)).catch(() => {});
     await this.#restartScreencast(entry);
     this.#pushState(entry);
   }
@@ -806,23 +812,55 @@ export class Browsers extends EventEmitter {
     entry.cast = null;
     if (old?.sid) { entry.cdp.send('Page.stopScreencast', {}, old.sid, 3000).catch(() => {}); entry.cdp.detach(old.sid); }
     clearInterval(entry.windowTimer);
-    if (!entry.viewers.size || !entry.active || !entry.pages.has(entry.active)) return;
+    if (!entry.viewers.size || !entry.active || !entry.pages.has(entry.active) || this.running.get(entry.id) !== entry) { this.#dropControl(entry); return; }
     const targetId = entry.active;
+    await this.#ensureControl(entry, targetId);
     const sid = await entry.cdp.attach(targetId);
     const cast = { sid, targetId };
     entry.cast = cast;
     entry.frameAt = 0;
     entry.sentAt = 0;
-    const send = (m, params) => entry.cdp.send(m, params, sid);
-    await send('Page.enable');
-    await Promise.all([
-      send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {}),
-      send('Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => {}),
-    ]);
     if (entry.cast !== cast) return;
     await this.#screencastOn(entry, sid);
+    if (entry.cast !== cast || this.running.get(entry.id) !== entry) return; // stopped meanwhile
     // website fullscreen (video, game, slides) → the viewer follows
+    clearInterval(entry.windowTimer);
     entry.windowTimer = setInterval(() => this.#checkWindow(entry, cast), 1000);
+    entry.windowTimer.unref?.();
+  }
+
+  /**
+   * Control session of the shown tab while someone watches remotely – stable across picture
+   * restarts (quality changes), so a held mouse button or a running drag is never cut off.
+   * It carries what only matters remotely: focus emulation (the server's window is rarely the
+   * focused one), the file-chooser hand-over and drag interception.
+   */
+  async #ensureControl(entry, targetId) {
+    if (entry.ctl?.targetId === targetId) return entry.ctl.ready;
+    this.#dropControl(entry);
+    const ctl = { targetId, sid: null };
+    entry.ctl = ctl;
+    ctl.ready = (async () => {
+      const sid = await entry.cdp.attach(targetId);
+      if (entry.ctl !== ctl) { entry.cdp.detach(sid); return null; }
+      const send = (m, params) => entry.cdp.send(m, params, sid).catch(() => {});
+      await send('Page.enable');
+      await Promise.all([
+        send('Emulation.setFocusEmulationEnabled', { enabled: true }),
+        send('Page.setInterceptFileChooserDialog', { enabled: true }),
+        send('Input.setInterceptDrags', { enabled: true }), // Chrome hands the drag to us, we finish it with real drag events
+      ]);
+      ctl.sid = sid;
+      return sid;
+    })().catch(() => null);
+    return ctl.ready;
+  }
+
+  #dropControl(entry) {
+    const old = entry.ctl;
+    entry.ctl = null;
+    entry.drag = null;
+    if (old) old.ready.then((sid) => sid && entry.cdp.detach(sid));
   }
 
   async #checkWindow(entry, cast) {
@@ -1016,6 +1054,7 @@ export class Browsers extends EventEmitter {
       entry.viewers.delete(client);
       entry.vs.delete(client);
       entry.stale?.delete(client);
+      this.ctx.bridge?.setRemote(id, entry.viewers.size > 0);
       if (!entry.viewers.size) await this.#restartScreencast(entry);
       this.emitList();
       return;
@@ -1024,6 +1063,7 @@ export class Browsers extends EventEmitter {
     const entry = this.running.get(id);
     const had = entry.viewers.size;
     entry.viewers.add(client);
+    this.ctx.bridge?.setRemote(id, true);
     if (!had) await this.#restartScreencast(entry);
     else if (entry.lastFrame) this.ctx.hub.send(client, entry.lastFrame);
     this.ctx.hub.send(client, { t: 'bstate', profileId: id, ...entry.state });
@@ -1055,10 +1095,13 @@ export class Browsers extends EventEmitter {
    */
   async input(id, ev) {
     const e = this.#entry(id);
-    const sid = await this.#tabSession(e);
+    // the viewer's own session: drag interception and focus emulation live there
+    const sid = (e.ctl?.targetId === e.active && (e.ctl.sid ?? await e.ctl.ready)) || await this.#tabSession(e);
     const move = ev?.kind === 'mouse' && ev.type === 'move';
     if (move && e.moveInFlight) { e.pendingMove = { sid, ev }; return; }
     if (!move && e.pendingMove) { const m = e.pendingMove; e.pendingMove = null; this.#sendInput(e, m.sid, m.ev); } // keep the order
+    // a release right after moves: Chrome may just have started a drag – let it report that first
+    if (ev?.kind === 'mouse' && ev.type === 'up' && e.lastMove) await e.lastMove.catch(() => {});
     this.#sendInput(e, sid, ev);
   }
 
@@ -1066,7 +1109,9 @@ export class Browsers extends EventEmitter {
   #sendInput(e, sid, ev) {
     const move = ev?.kind === 'mouse' && ev.type === 'move';
     if (move) e.moveInFlight = true;
-    this.#dispatchInput(e, sid, ev).then(() => {
+    const job = this.#dispatchInput(e, sid, ev);
+    if (move) e.lastMove = job;
+    job.then(() => {
       if (e.stalled) { e.stalled = false; this.#toViewers(e, { t: 'bnotice', profileId: e.id, clear: true }); }
     }, (err) => {
       if (err.timeout) return this.#stalled(e);
@@ -1096,11 +1141,24 @@ export class Browsers extends EventEmitter {
     const send = (m, params) => e.cdp.send(m, params, sid, 4000);
     const modifiers = (ev.alt ? MOD.alt : 0) | (ev.ctrl ? MOD.ctrl : 0) | (ev.meta ? MOD.meta : 0) | (ev.shift ? MOD.shift : 0);
     const x = num(ev.x, 0, 10_000), y = num(ev.y, 0, 10_000);
+    if (e.drag && ev.kind === 'mouse' && (ev.type === 'move' || ev.type === 'up')) {
+      // an intercepted drag is running: mouse moves become dragOver, the release becomes the drop
+      const d = e.drag;
+      const drag = (type) => e.cdp.send('Input.dispatchDragEvent', { type, x, y, data: d.data, modifiers }, d.sid, 4000);
+      if (!d.entered) { d.entered = true; await drag('dragEnter'); }
+      if (ev.type === 'move') return drag('dragOver');
+      e.drag = null;
+      await drag('dragOver'); // the target decides here whether it accepts the drop
+      await drag('drop').catch(() => drag('dragCancel').catch(() => {}));
+    }
     switch (ev.kind) {
       case 'mouse': {
         const type = { move: 'mouseMoved', down: 'mousePressed', up: 'mouseReleased' }[ev.type];
         if (!type) return;
         const button = ['left', 'right', 'middle'].includes(ev.button) ? ev.button : 'none';
+        // a press needs the pointer there first (taps on phones come without a move): Chrome would drop it
+        if (type === 'mousePressed' && (e.mouseAt?.x !== x || e.mouseAt?.y !== y)) send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0, modifiers, pointerType: 'mouse' }).catch(() => {}); // not awaited: written right before the press, nothing can overtake it
+        e.mouseAt = { x, y };
         await send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' && !ev.buttons ? 'none' : button, buttons: num(ev.buttons, 0, 7), clickCount: num(ev.clickCount, 0, 3), modifiers, pointerType: 'mouse' });
         return;
       }
@@ -1219,6 +1277,18 @@ export class Browsers extends EventEmitter {
     const paths = (Array.isArray(files) ? files : []).slice(0, c.mode === 'selectMultiple' ? 50 : 1)
       .map((f) => path.join(dir, path.basename(String(f)))).filter((f) => f.startsWith(dir + path.sep) && fs.existsSync(f));
     await e.cdp.send('DOM.setFileInputFiles', { files: paths, backendNodeId: c.backendNodeId }, c.sid);
+  }
+
+  /** Files from the viewer's computer dropped onto the page (uploaded first, like for the file chooser). */
+  async dropFiles(id, { x, y, files }) {
+    const e = this.#entry(id);
+    const sid = await this.#tabSession(e);
+    const dir = this.ctx.store.p('browser-uploads', id);
+    const paths = (Array.isArray(files) ? files : []).slice(0, 50).map((f) => path.join(dir, path.basename(String(f)))).filter((f) => f.startsWith(dir + path.sep) && fs.existsSync(f));
+    if (!paths.length) return;
+    const data = { items: [], files: paths, dragOperationsMask: 1 }; // copy
+    const at = { x: num(x, 0, 10_000), y: num(y, 0, 10_000) };
+    for (const type of ['dragEnter', 'dragOver', 'drop']) await e.cdp.send('Input.dispatchDragEvent', { type, ...at, data }, sid);
   }
 
   /** Where the viewer's upload for the file chooser goes (old uploads of this identity are removed after a day). */

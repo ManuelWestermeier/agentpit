@@ -42,8 +42,11 @@ export class Tunnel extends EventEmitter {
   bin() {
     const own = path.join(this.binDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
     if (fs.existsSync(own)) return own;
-    const legacy = path.join(this.ctx.config.home, 'bin', path.basename(own)); // 1.4.0 pre-release location
-    if (fs.existsSync(legacy)) return legacy;
+    // pre-release 1.4.0 put it into <home>/bin – in a git checkout that is the package's bin/: move it out
+    const legacy = path.join(this.ctx.config.home, 'bin', path.basename(own));
+    if (fs.existsSync(legacy)) {
+      try { fs.mkdirSync(this.binDir, { recursive: true }); fs.renameSync(legacy, own); return own; } catch { return legacy; } // still running → next start
+    }
     const exts = process.platform === 'win32' ? ['.exe', ''] : [''];
     for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
       for (const ext of exts) { const f = path.join(dir, `cloudflared${ext}`); if (dir && fs.existsSync(f)) return f; }

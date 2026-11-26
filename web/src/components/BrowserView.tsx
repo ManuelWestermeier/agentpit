@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Download, Expand, Gauge, Keyboard, Loader2, Maximize, Mic, MicOff, Minimize, Plus, Power, RotateCw, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Download, Expand, Gauge, Keyboard, Loader2, Maximize, Mic, MicOff, Minimize, Video, VideoOff, Plus, Power, RotateCw, Upload, Volume2, VolumeX, X } from 'lucide-react';
 import { useRemoteAudio } from '../lib/remoteAudio';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react';
 import { act, useStore } from '../lib/store';
@@ -10,6 +10,7 @@ interface Tab { i: number; url: string; title: string; active: boolean }
 interface Dialog { type: string; message: string; defaultValue: string }
 interface FedCm { dialogType: string; title: string; subtitle: string; accounts: { email: string; name: string; picture?: string }[] }
 interface Notice { level: string; text: string; stalled?: boolean }
+interface SelectReq { sel: unknown; title: string; index: number; options: { label: string; disabled: boolean; group: string }[] }
 
 const BUTTON: Record<number, string> = { 0: 'left', 1: 'middle', 2: 'right' };
 
@@ -32,6 +33,8 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
   const [fedcm, setFedcm] = useState<FedCm | null>(null);
   const [chooser, setChooser] = useState<{ multiple: boolean } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [select, setSelect] = useState<SelectReq | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [full, setFull] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const siteFull = useRef(false);
@@ -104,6 +107,8 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
         setFedcm(m.closed ? null : { dialogType: m.dialogType, title: m.title, subtitle: m.subtitle, accounts: m.accounts ?? [] });
       } else if (m.t === 'bfile') {
         setChooser({ multiple: !!m.multiple });
+      } else if (m.t === 'bselect') {
+        setSelect({ sel: m.sel, title: m.title, index: m.index, options: m.options ?? [] });
       } else if (m.t === 'bnotice') {
         setNotice(m.clear ? null : { level: m.level, text: m.text, stalled: m.stalled });
       }
@@ -132,17 +137,29 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
   }, [profileId]);
   const toggleFull = () => (document.fullscreenElement ? document.exitFullscreen().catch(() => {}) : root.current?.requestFullscreen?.().catch(() => {}));
 
+  const upload = async (list: FileList | File[]) => {
+    const names: string[] = [];
+    for (const f of Array.from(list)) {
+      const r = await fetch(`/api/browsers/${encodeURIComponent(profileId)}/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'x-cockpit': '1' }, body: f });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      names.push(j.file);
+    }
+    return names;
+  };
+  // files dragged from this computer onto the remote page land where they are dropped
+  const onDrop = async (e: React.DragEvent) => {
+    setDragOver(false);
+    if (!e.dataTransfer.files.length || !img.current) return;
+    e.preventDefault();
+    const p = point(e.clientX, e.clientY);
+    try { await conn.call('browsers.drop', { id: profileId, ...p, files: await upload(e.dataTransfer.files) }); } catch (err) { setError((err as Error).message); }
+  };
+  const answerSelect = (index: number | null) => { if (select) conn.send('browsers.select', { id: profileId, sel: select.sel, index }); setSelect(null); stage.current?.focus(); };
   const chooseFiles = async (list: FileList | null) => {
     setChooser(null);
-    const names: string[] = [];
     try {
-      for (const f of Array.from(list ?? [])) {
-        const r = await fetch(`/api/browsers/${encodeURIComponent(profileId)}/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', headers: { 'x-cockpit': '1' }, body: f });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error || r.statusText);
-        names.push(j.file);
-      }
-      await conn.call('browsers.files', { id: profileId, files: names });
+      await conn.call('browsers.files', { id: profileId, files: await upload(list ?? []) });
     } catch (e) { setError((e as Error).message); }
   };
 
@@ -236,6 +253,7 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
         <button className={`btn ghost icon small${showStream ? ' active' : ''}`} title="Stream-Qualität" aria-expanded={showStream} onClick={() => setShowStream((v) => !v)}><Gauge size={14} /></button>
         {audioOk?.available && <>
           <button className={`btn ghost icon small${av.sound ? ' active' : ''}`} title={av.sound ? 'Ton aus' : 'Ton des Browsers hier abspielen'} aria-pressed={av.sound} onClick={() => av.setSound((v) => !v)}>{av.sound ? <Volume2 size={14} /> : <VolumeX size={14} />}</button>
+          <button className={`btn ghost icon small${av.cam ? ' active' : ''}`} title={av.cam ? 'Kamera aus' : 'Meine Kamera als Kamera des Browsers'} aria-pressed={av.cam} onClick={() => av.setCam((v) => !v)}>{av.cam ? <Video size={14} /> : <VideoOff size={14} />}</button>
           <button className={`btn ghost icon small${av.mic ? ' active' : ''}`} title={av.mic ? 'Mikrofon aus' : 'Mein Mikrofon als Mikrofon des Browsers'} aria-pressed={av.mic} onClick={() => av.setMic((v) => !v)}>{av.mic ? <Mic size={14} /> : <MicOff size={14} />}</button>
         </>}
         <button className="btn ghost icon small only-touch" title="Tastatur" onClick={() => kbd.current?.focus()}><Keyboard size={14} /></button>
@@ -255,7 +273,10 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
       )}
       <div className="bstage" ref={stage} tabIndex={0} onKeyDown={(e) => onKey(e, 'down')} onKeyUp={(e) => onKey(e, 'up')}
         onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); send({ kind: 'text', text: t }); } }}
-        onContextMenu={(e) => e.preventDefault()} aria-label="Ferngesteuerter Browser – klicken, dann tippen">
+        onContextMenu={(e) => e.preventDefault()} aria-label="Ferngesteuerter Browser – klicken, dann tippen"
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); } }}
+        onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
+        {dragOver && <div className="bdrop">Hier loslassen – die Dateien landen an dieser Stelle der Seite</div>}
         <img ref={img} alt="" draggable={false} style={{ visibility: hasFrame ? 'visible' : 'hidden' }} onLoad={ackFrame} onError={ackFrame}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onWheel={onWheel} />
         {showStream && (
@@ -287,6 +308,20 @@ export function BrowserView({ profileId, compact = false, extra }: { profileId: 
             <span>{notice.text}</span>
             {notice.stalled && <button className="btn small" onClick={() => { setNotice(null); nav('reload'); }}>Tab neu laden</button>}
             <button className="btn ghost icon small" aria-label="Schließen" onClick={() => setNotice(null)}><X size={12} /></button>
+          </div>
+        )}
+        {select && (
+          <div className="boverlay col" onPointerDown={(e) => { if (e.target === e.currentTarget) answerSelect(null); }}>
+            <div className="bdialog bselect" role="listbox" aria-label={select.title || 'Auswahl'}>
+              {select.title && <b>{select.title}</b>}
+              <div className="bselect-list">
+                {select.options.map((o, i) => (
+                  <button key={i} role="option" aria-selected={i === select.index} disabled={o.disabled} className={i === select.index ? 'on' : ''} onClick={() => answerSelect(i)}>
+                    {o.group && (i === 0 || select.options[i - 1].group !== o.group) && <small>{o.group}</small>}{o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {fedcm && (
